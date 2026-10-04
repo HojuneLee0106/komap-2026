@@ -12,6 +12,21 @@ class GrayWrapper(nn.Module):
         return self.net(x.repeat(1, 3, 1, 1))
 
 
+def _load_encoder_weights(encoder, path):
+    """smp의 일부 encoder는 load_state_dict를 오버라이드하면서 반환값을 돌려주지
+    않는다(예: EfficientNetEncoder). 그래서 키 비교를 직접 한 뒤 로드한다."""
+    sd = torch.load(path, map_location='cpu')
+    own = encoder.state_dict()
+    # 분류 head 키는 encoder가 내부에서 버리므로 누락 판정에서 제외한다
+    drop = ('_fc.', 'fc.', 'classifier.', 'head.')
+    missing = [k for k in own
+               if k not in sd and not k.startswith(drop)]
+    unexpected = [k for k in sd if k not in own]
+
+    encoder.load_state_dict(sd, strict=False)   # 반환값은 쓰지 않는다
+    return missing, unexpected
+
+
 def build_model(cfg, n_classes):
     net = smp.Unet(
         encoder_name=cfg.encoder,
@@ -24,9 +39,10 @@ def build_model(cfg, n_classes):
         assert os.path.exists(p), (
             f'사전학습 가중치 없음: {p}\n'
             'python -m src.prepare_weights 를 먼저 1회 실행할 것 (인터넷 필요).')
-        sd = torch.load(p, map_location='cpu')
-        missing, unexpected = net.encoder.load_state_dict(sd, strict=False)
-        assert not missing, f'encoder 가중치 누락: {missing[:5]}'
+        missing, unexpected = _load_encoder_weights(net.encoder, p)
+        assert not missing, (
+            f'encoder 가중치 {len(missing)}개 누락: {missing[:5]}\n'
+            'prepare_weights를 지금 설치된 smp 버전으로 다시 실행할 것.')
         print(f'[model] encoder 가중치 로드: {os.path.basename(p)} '
               f'(unexpected {len(unexpected)}개)')
     return GrayWrapper(net)
