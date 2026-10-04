@@ -12,6 +12,15 @@ from .postprocess import to_4class
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+# T4(Turing)는 bf16을 지원하지 않는다. GPU에 맞춰 자동 선택한다.
+#   bf16: A100, L4 등 -> GradScaler 불필요
+#   fp16: T4          -> GradScaler 필요 (없으면 gradient underflow로 학습이 죽는다)
+USE_BF16 = DEVICE == 'cuda' and torch.cuda.is_bf16_supported()
+AMP_DTYPE = torch.bfloat16 if USE_BF16 else torch.float16
+if DEVICE == 'cuda':
+    print(f'[amp] {torch.cuda.get_device_name(0)} -> '
+          f'{"bfloat16" if USE_BF16 else "float16 + GradScaler"}')
+
 
 def pad_to_multiple(x, m=32):
     h, w = x.shape[-2:]
@@ -48,7 +57,7 @@ def infer_logits(model, x, cfg, n_cls):
         pp = pp.to(memory_format=torch.channels_last)
         logit = 0
         for k in rots:
-            with torch.autocast(DEVICE, dtype=torch.bfloat16, enabled=DEVICE == 'cuda'):
+            with torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=DEVICE == 'cuda'):
                 o = model(torch.rot90(pp, k, (-2, -1)))
             logit = logit + torch.rot90(o.float(), -k, (-2, -1))
         acc[..., y:y + th, xx:xx + tw] += logit[..., :ph, :pw] / len(rots)
@@ -79,6 +88,7 @@ def train_fold(cfg, fold, tr_items, va_items):
     model = build_model(cfg, n_cls).to(DEVICE).to(memory_format=torch.channels_last)
     crit = build_loss(cfg.loss, w, DEVICE, cfg.loss_weights)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scaler = torch.amp.GradScaler('cuda', enabled=(DEVICE == 'cuda' and not USE_BF16))
 
     dl = DataLoader(PatchDataset(tr_items, cfg, cfg.steps_per_epoch * cfg.batch),
                     batch_size=cfg.batch, num_workers=cfg.num_workers,
@@ -97,13 +107,14 @@ def train_fold(cfg, fold, tr_items, va_items):
         for xb, yb in tqdm(dl, desc=f'f{fold} ep{ep}', leave=False):
             xb = xb.to(DEVICE, non_blocking=True).to(memory_format=torch.channels_last)
             yb = yb.to(DEVICE, non_blocking=True)
-            with torch.autocast(DEVICE, dtype=torch.bfloat16, enabled=DEVICE == 'cuda'):
+            with torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=DEVICE == 'cuda'):
                 logit = model(xb)
             loss = crit(logit.float(), yb)
             opt.zero_grad(set_to_none=True)
-            loss.backward()
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step(); sched.step()
+            scaler.step(opt); scaler.update(); sched.step()
             run += loss.item()
 
         if ep % cfg.val_every == 0 or ep == cfg.epochs:
