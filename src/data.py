@@ -68,6 +68,11 @@ def make_folds(cfg):
     """반환: [(train_items, val_items), ...]"""
     tr = load_split(cfg.data_root, 'train', scale=cfg.scale, target_width=cfg.target_width)
     va = load_split(cfg.data_root, 'valid', scale=cfg.scale, target_width=cfg.target_width)
+    if cfg.use_all:
+        # 최종 제출용: 90장 전부로 학습한다. 검증셋은 학습에 포함돼 있으므로
+        # 진행 확인용일 뿐이고 모델 선택 기준으로 쓰면 안 된다(train.py가
+        # use_all일 때 마지막 epoch을 저장한다).
+        return [(tr + va, va[:6])]
     if cfg.split == 'official':
         return [(tr, va)]
     allv = tr + va

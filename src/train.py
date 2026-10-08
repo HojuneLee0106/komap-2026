@@ -168,7 +168,7 @@ def train_fold(cfg, fold, tr_items, va_items):
             print(f'  ep{ep:3d} loss {run / len(dl):.4f} | mIoU {r["mIoU"]:.4f} '
                   f'(±{r["std"]:.3f}, 최악 {r["worst"]:.3f}) | '
                   + ' '.join(f'{k} {v:.3f}' for k, v in r['per_class'].items()))
-            if r['mIoU'] > best:
+            if r['mIoU'] > best or cfg.use_all:   # use_all이면 검증이 새므로 최신을 저장
                 best = r['mIoU']
                 torch.save({'model': model.state_dict(), 'cfg': vars(cfg),
                             'fold': fold, 'mIoU': best},
