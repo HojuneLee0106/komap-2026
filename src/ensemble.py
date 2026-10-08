@@ -16,6 +16,7 @@ from .model import build_model
 from .train import infer_logits, to_orig, DEVICE
 from .postprocess import to_4class
 from .metrics import evaluate
+from .config import CLASS_NAMES
 
 
 def _load(ckpt_path):
@@ -57,7 +58,66 @@ def predict_logits(ckpts, items):
     return [a / len(ckpts) for a in acc]
 
 
-def eval_on_fold(work_dir, exps, fold=0, base_cfg=None):
+@torch.no_grad()
+def _logits_per_model(ckpts, items, stride=1):
+    """모델별 logit을 모은다. stride>1이면 픽셀을 솎아 메모리를 줄인다
+    (가중치 탐색용 — 최종 예측은 stride=1로 다시 계산한다)."""
+    out = []
+    for p in ckpts:
+        m, c, bias, _ = _load(p)
+        n_cls = 4 if c.mode == '4class' else 3
+        cur = []
+        for it in items:
+            l = (infer_logits(m, normalize_full(it), c, n_cls) + bias[:, None, None])
+            cur.append(l[:, ::stride, ::stride].half())
+        out.append(cur)
+        del m; torch.cuda.empty_cache()
+    return out
+
+
+def fit_class_weights(ckpts, items, cfg, stride=2,
+                      grid=(0.0, 0.5, 1.0, 1.5, 2.0), rounds=2):
+    """모델 x 클래스 가중치를 검증셋에서 좌표상승으로 찾는다.
+
+    '어떤 모델은 Al3Ni를, 어떤 모델은 Si를 잘한다'를 이용하는 방식이다.
+    덮어쓰기가 아니라 logit 합산이므로 클래스 배타성이 유지된다.
+
+    주의: 18장에 20개 파라미터를 맞추므로 과적합 여지가 크다.
+    반드시 다른 fold에서 검증하고, 단순 평균 대비 이득이 작으면 쓰지 말 것.
+    """
+    n_cls = 4
+    L = _logits_per_model(ckpts, items, stride)          # [M][N] 각 (C,h,w)
+    GT = [torch.from_numpy(it['label_eval'][::stride, ::stride].astype(np.int64))
+          for it in items]
+    M = len(ckpts)
+
+    def score(W):
+        tot = []
+        for i in range(len(items)):
+            acc = sum(L[m][i].float() * torch.tensor(W[m], dtype=torch.float32)[:, None, None]
+                      for m in range(M))
+            p = acc.argmax(0).numpy().astype(np.uint8)
+            tot.append(p)
+        return evaluate(tot, [g.numpy() for g in GT], n_cls)['mIoU']
+
+    W = np.ones((M, n_cls), np.float32)
+    best = score(W)
+    base = best
+    for _ in range(rounds):
+        for m in range(M):
+            for c in range(n_cls):
+                for v in grid:
+                    W2 = W.copy(); W2[m, c] = v
+                    if W2[:, c].sum() == 0:
+                        continue
+                    sc = score(W2)
+                    if sc > best + 1e-5:
+                        best, W = sc, W2
+    return W, base, best
+
+
+def eval_on_fold(work_dir, exps, fold=0, base_cfg=None, class_weights=False,
+                 verify_fold=None):
     """같은 fold의 검증셋에서 개별 성적과 앙상블 성적을 비교한다."""
     cfg = base_cfg or CFG()
     set_seed(cfg.seed)
@@ -76,6 +136,18 @@ def eval_on_fold(work_dir, exps, fold=0, base_cfg=None):
              for l, it in zip(L, va)]
     r = evaluate(preds, [it['label_eval'] for it in va], 4)
     print(f'   ─────────────────────────')
-    print(f'   앙상블           {r["mIoU"]:.4f}  (±{r["std"]:.3f}, 최악 {r["worst"]:.3f})')
+    print(f'   단순평균 앙상블  {r["mIoU"]:.4f}  (±{r["std"]:.3f}, 최악 {r["worst"]:.3f})')
     print('   ' + '  '.join(f'{k} {v:.3f}' for k, v in r['per_class'].items()))
+
+    if class_weights:
+        W, b, a = fit_class_weights(ckpts, va, cfg)
+        print(f'\n   [클래스별 가중치] {b:.4f} -> {a:.4f} ({a - b:+.4f})')
+        print(f'   {"모델":18s}  ' + '  '.join(f'{k:>6s}' for k in CLASS_NAMES))
+        for p, w in zip(ckpts, W):
+            print(f'   {os.path.basename(os.path.dirname(p)):18s}  '
+                  + '  '.join(f'{x:6.1f}' for x in w))
+        r['class_weights'] = W.tolist()
+        if verify_fold is not None:
+            print(f'\n   (fold {verify_fold}에서 과적합 검증은 같은 exps의 '
+                  f'fold{verify_fold}.pth가 있어야 가능하다)')
     return r
