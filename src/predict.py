@@ -60,12 +60,17 @@ def make_zip(out_dir, zip_path):
     print(f'{zip_path} 생성 ({n}개 파일)')
 
 
-def main(cfg=None, ckpts=None):
+def main(cfg=None, ckpts=None, exps=None):
     cfg = cfg or CFG()
     set_seed(cfg.seed)
     n_cls = 4 if cfg.mode == '4class' else 3
     run_dir = os.path.join(cfg.work_dir, cfg.exp)
-    ckpts = ckpts or sorted(glob.glob(f'{run_dir}/fold*.pth'))
+    if ckpts is None:
+        if exps:   # 여러 실험을 섞는다
+            ckpts = [p for e in exps
+                     for p in sorted(glob.glob(f'{cfg.work_dir}/{e}/fold*.pth'))]
+        else:
+            ckpts = sorted(glob.glob(f'{run_dir}/fold*.pth'))
     assert ckpts, f'체크포인트 없음: {run_dir}'
 
     models, biases = [], []
