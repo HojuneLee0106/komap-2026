@@ -27,8 +27,16 @@ def _load_encoder_weights(encoder, path):
     return missing, unexpected
 
 
+ARCHS = {
+    'unet': smp.Unet, 'unetpp': smp.UnetPlusPlus, 'deeplabv3plus': smp.DeepLabV3Plus,
+    'manet': smp.MAnet, 'fpn': smp.FPN, 'pspnet': smp.PSPNet, 'linknet': smp.Linknet,
+}
+
+
 def build_model(cfg, n_classes):
-    net = smp.Unet(
+    arch = getattr(cfg, 'arch', 'unet')
+    assert arch in ARCHS, f'알 수 없는 arch: {arch} (가능: {list(ARCHS)})'
+    net = ARCHS[arch](
         encoder_name=cfg.encoder,
         encoder_weights=None,       # 항상 None. 가중치는 로컬 파일에서 읽는다
         in_channels=3,

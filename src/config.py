@@ -23,6 +23,7 @@ class CFG:
     si_thresh: float = 8.0     # 3class 전용. 성분 최대 반두께(px) 임계값
 
     # 모델
+    arch: str = 'unet'   # unet | unetpp | deeplabv3plus | manet | fpn | pspnet | linknet
     encoder: str = 'timm-efficientnet-b3'
     # ConvNeXt는 'tu-convnext_tiny'. smp 버전에 따라 decoder stage가 안 맞을 수
     # 있으므로 첫 실행에서 forward 통과 여부를 반드시 확인할 것.
@@ -55,6 +56,7 @@ class CFG:
     loss_weights: tuple = (0.5, 0.5)
 
     # 검증
+    use_all: bool = False   # True면 90장 전부로 학습하고 검증을 건너뛴다(최종 제출용).
     split: str = 'kfold'       # 'kfold' (train+valid 90장) | 'official' (70/20)
     n_folds: int = 5
     folds: tuple = (0, 1, 2, 3, 4)

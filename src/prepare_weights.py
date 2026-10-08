@@ -7,6 +7,14 @@ import os, sys, torch
 import segmentation_models_pytorch as smp
 
 
+def ensure(encoder, out_dir):
+    """가중치가 없으면 받아서 저장한다. 있으면 아무것도 안 한다."""
+    p = os.path.join(out_dir, f'{encoder.replace("/", "_")}_encoder.pth')
+    if not os.path.exists(p):
+        main(encoder, out_dir)
+    return p
+
+
 def main(encoder='timm-efficientnet-b3', out_dir='./weights'):
     os.makedirs(out_dir, exist_ok=True)
     net = smp.Unet(encoder_name=encoder, encoder_weights='imagenet',
