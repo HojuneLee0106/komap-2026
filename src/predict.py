@@ -5,7 +5,7 @@ from PIL import Image
 from .config import CFG, PALETTE, SUFFIX_IN, SUFFIX_OUT
 from .data import load_split, normalize_full, set_seed
 from .model import build_model
-from .train import infer_logits, DEVICE
+from .train import infer_logits, to_orig, DEVICE
 from .postprocess import to_4class
 
 PAL = np.array(PALETTE, np.uint8)
@@ -76,14 +76,14 @@ def main(cfg=None, ckpts=None):
         models.append(m)
         print(f'  {os.path.basename(c)} (val mIoU {sd.get("mIoU", float("nan")):.4f})')
 
-    test = load_split(cfg.data_root, 'test', with_mask=False)
+    test = load_split(cfg.data_root, 'test', with_mask=False, scale=cfg.scale)
     out_dir = os.path.join(run_dir, 'submission')
     os.makedirs(out_dir, exist_ok=True)
 
     for it in test:
         x = normalize_full(it)
         logit = sum(infer_logits(m, x, cfg, n_cls) for m in models) / len(models)
-        pred = logit.argmax(0).numpy().astype(np.uint8)
+        pred = to_orig(logit.argmax(0).numpy().astype(np.uint8), it['orig_hw'])
         save_mask(to_4class(pred, cfg), it['path'], out_dir)
         print('  ->', it['stem'])
 

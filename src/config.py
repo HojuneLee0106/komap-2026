@@ -29,6 +29,10 @@ class CFG:
     pretrained: bool = True
 
     # 입력
+    scale: float = 1.0   # 입력 확대 배율. 공정 Si 폭이 약 2.5px라 1배에서는
+                         # 경계 1px 오차만으로 IoU 상한이 0.50까지 떨어진다.
+                         # 2배로 올리면 상한이 0.69로 오른다 (3배는 추가 이득 없음).
+                         # 평가는 항상 원본 해상도에서 수행한다.
     crop: int = 512
     overlap: float = 0.25
 

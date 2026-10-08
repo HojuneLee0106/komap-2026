@@ -1,5 +1,5 @@
 import os, json, time, math
-import numpy as np, torch, torch.nn.functional as F
+import numpy as np, cv2, torch, torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -70,10 +70,20 @@ def predict_image(model, x, cfg, n_cls):
     return infer_logits(model, x, cfg, n_cls).argmax(0).numpy().astype(np.uint8)
 
 
+def to_orig(pred, hw):
+    """확대 입력으로 추론한 결과를 원본 해상도로 되돌린다.
+    보간이 섞이면 팔레트 밖 값이 생기므로 반드시 NEAREST."""
+    if pred.shape == tuple(hw):
+        return pred
+    return cv2.resize(pred, (hw[1], hw[0]), interpolation=cv2.INTER_NEAREST)
+
+
 def validate(model, items, cfg, n_cls):
-    preds = [to_4class(predict_image(model, normalize_full(it), cfg, n_cls), cfg)
+    # 원본 해상도로 되돌린 뒤 후처리·채점한다 (두께 임계값도 원본 기준)
+    preds = [to_4class(to_orig(predict_image(model, normalize_full(it), cfg, n_cls),
+                               it['orig_hw']), cfg)
              for it in items]
-    return evaluate(preds, [it['label'] for it in items], 4)
+    return evaluate(preds, [it['label_eval'] for it in items], 4)
 
 
 def train_fold(cfg, fold, tr_items, va_items):
@@ -148,8 +158,8 @@ def main(cfg=None):
             break
         s, m = train_fold(cfg, f, *folds[f])
         scores.append(s); times.append(m)
-    print(f'\n=== {cfg.exp} | mode={cfg.mode} loss={cfg.loss} '
-          f'crop={cfg.crop} encoder={cfg.encoder} ===')
+    print(f'\n=== {cfg.exp} | mode={cfg.mode} loss={cfg.loss} crop={cfg.crop} '
+          f'scale={cfg.scale} encoder={cfg.encoder} ===')
     print(f'fold별: {np.round(scores, 4)}')
     print(f'평균 {np.mean(scores):.4f} | 표준편차 {np.std(scores):.4f} | 총 {sum(times):.0f}분')
     summary = {'exp': cfg.exp, 'cfg': vars(cfg), 'scores': scores,

@@ -28,21 +28,34 @@ def rgb_to_label(rgb):
     return lab
 
 
-def load_split(root, split, with_mask=True):
+def load_split(root, split, with_mask=True, scale=1.0):
+    """scale>1이면 모델 입력·학습 라벨만 확대한다.
+    'label_eval'과 'orig_hw'는 항상 원본 해상도 — 채점은 원본에서 이뤄진다."""
     items = []
     for ip in sorted(glob.glob(f'{root}/{split}/images/*{SUFFIX_IN}')):
         stem = os.path.basename(ip)[:-len(SUFFIX_IN)]
-        img = np.array(Image.open(ip).convert('L'))
-        lab = None
+        img0 = np.array(Image.open(ip).convert('L'))
+        lab0 = None
         if with_mask:
             mp = f'{root}/{split}/masks/{stem}{SUFFIX_OUT}'
-            lab = rgb_to_label(np.array(Image.open(mp).convert('RGB')))
-            assert lab.max() < 4, f'{stem}: 팔레트 밖 색상 존재'
-            assert lab.shape == img.shape, f'{stem}: 이미지/마스크 크기 불일치'
+            lab0 = rgb_to_label(np.array(Image.open(mp).convert('RGB')))
+            assert lab0.max() < 4, f'{stem}: 팔레트 밖 색상 존재'
+            assert lab0.shape == img0.shape, f'{stem}: 이미지/마스크 크기 불일치'
+
+        if scale != 1.0:
+            h, w = img0.shape
+            W, H = int(round(w * scale)), int(round(h * scale))
+            img = cv2.resize(img0, (W, H), interpolation=cv2.INTER_CUBIC)
+            lab = (cv2.resize(lab0, (W, H), interpolation=cv2.INTER_NEAREST)
+                   if lab0 is not None else None)
+        else:
+            img, lab = img0, lab0
+
         items.append({
             'stem': stem, 'path': ip,
             'alloy': stem.split('_')[0], 'step': stem.split('_')[1],
-            'image': img, 'label': lab,
+            'image': img, 'label': lab,          # 모델 입력 해상도
+            'label_eval': lab0, 'orig_hw': img0.shape,   # 원본 해상도 (채점용)
             'mean': float(img.mean()), 'std': float(img.std()) + 1e-6,
         })
     assert items, f'{root}/{split}/images 에 파일이 없다'
@@ -51,8 +64,8 @@ def load_split(root, split, with_mask=True):
 
 def make_folds(cfg):
     """반환: [(train_items, val_items), ...]"""
-    tr = load_split(cfg.data_root, 'train')
-    va = load_split(cfg.data_root, 'valid')
+    tr = load_split(cfg.data_root, 'train', scale=cfg.scale)
+    va = load_split(cfg.data_root, 'valid', scale=cfg.scale)
     if cfg.split == 'official':
         return [(tr, va)]
     allv = tr + va
