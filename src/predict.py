@@ -68,21 +68,24 @@ def main(cfg=None, ckpts=None):
     ckpts = ckpts or sorted(glob.glob(f'{run_dir}/fold*.pth'))
     assert ckpts, f'체크포인트 없음: {run_dir}'
 
-    models = []
+    models, biases = [], []
     for c in ckpts:
         sd = torch.load(c, map_location='cpu')
+        biases.append(torch.tensor(sd.get('bias', [0.0] * n_cls), dtype=torch.float32))
         m = build_model(cfg, n_cls).to(DEVICE).to(memory_format=torch.channels_last)
         m.load_state_dict(sd['model']); m.eval()
         models.append(m)
         print(f'  {os.path.basename(c)} (val mIoU {sd.get("mIoU", float("nan")):.4f})')
 
-    test = load_split(cfg.data_root, 'test', with_mask=False, scale=cfg.scale)
+    test = load_split(cfg.data_root, 'test', with_mask=False,
+                      scale=cfg.scale, target_width=cfg.target_width)
     out_dir = os.path.join(run_dir, 'submission')
     os.makedirs(out_dir, exist_ok=True)
 
     for it in test:
         x = normalize_full(it)
-        logit = sum(infer_logits(m, x, cfg, n_cls) for m in models) / len(models)
+        logit = sum(infer_logits(m, x, cfg, n_cls) + b[:, None, None]
+                    for m, b in zip(models, biases)) / len(models)
         pred = to_orig(logit.argmax(0).numpy().astype(np.uint8), it['orig_hw'])
         save_mask(to_4class(pred, cfg), it['path'], out_dir)
         print('  ->', it['stem'])

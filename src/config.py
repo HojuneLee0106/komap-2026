@@ -33,6 +33,11 @@ class CFG:
                          # 경계 1px 오차만으로 IoU 상한이 0.50까지 떨어진다.
                          # 2배로 올리면 상한이 0.69로 오른다 (3배는 추가 이득 없음).
                          # 평가는 항상 원본 해상도에서 수행한다.
+    target_width: int = 0    # >0이면 모든 이미지를 이 가로폭으로 맞춘다(축척 통일).
+                             # 데이터가 675~1440px로 섞여 있고 종횡비는 모두 1.406으로
+                             # 같다. 공정 Si 반두께도 1.4~3.0px로 폭에 거의 비례해,
+                             # 같은 조직이 이미지마다 다른 픽셀 크기로 보이는 상태다.
+                             # scale과 동시에 쓰지 않는다 (target_width가 우선).
     crop: int = 512
     overlap: float = 0.25
     aug_scale: float = 0.2   # RandomScale 폭. 0이면 끈다.
@@ -55,6 +60,8 @@ class CFG:
     folds: tuple = (0, 1, 2, 3, 4)
     val_every: int = 5
     tta: bool = True
+    calibrate: bool = True   # 검증셋에서 클래스별 logit 보정값을 탐색한다.
+                             # 지금 모델은 공정 Si를 과예측 중(8.4% vs 정답 6.9%).
 
     seed: int = 42
     num_workers: int = 2

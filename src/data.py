@@ -28,7 +28,7 @@ def rgb_to_label(rgb):
     return lab
 
 
-def load_split(root, split, with_mask=True, scale=1.0):
+def load_split(root, split, with_mask=True, scale=1.0, target_width=0):
     """scale>1이면 모델 입력·학습 라벨만 확대한다.
     'label_eval'과 'orig_hw'는 항상 원본 해상도 — 채점은 원본에서 이뤄진다."""
     items = []
@@ -42,9 +42,11 @@ def load_split(root, split, with_mask=True, scale=1.0):
             assert lab0.max() < 4, f'{stem}: 팔레트 밖 색상 존재'
             assert lab0.shape == img0.shape, f'{stem}: 이미지/마스크 크기 불일치'
 
-        if scale != 1.0:
+        h0, w0 = img0.shape
+        sc = (target_width / w0) if target_width else scale
+        if abs(sc - 1.0) > 1e-6:
             h, w = img0.shape
-            W, H = int(round(w * scale)), int(round(h * scale))
+            W, H = int(round(w * sc)), int(round(h * sc))
             img = cv2.resize(img0, (W, H), interpolation=cv2.INTER_CUBIC)
             lab = (cv2.resize(lab0, (W, H), interpolation=cv2.INTER_NEAREST)
                    if lab0 is not None else None)
@@ -64,8 +66,8 @@ def load_split(root, split, with_mask=True, scale=1.0):
 
 def make_folds(cfg):
     """반환: [(train_items, val_items), ...]"""
-    tr = load_split(cfg.data_root, 'train', scale=cfg.scale)
-    va = load_split(cfg.data_root, 'valid', scale=cfg.scale)
+    tr = load_split(cfg.data_root, 'train', scale=cfg.scale, target_width=cfg.target_width)
+    va = load_split(cfg.data_root, 'valid', scale=cfg.scale, target_width=cfg.target_width)
     if cfg.split == 'official':
         return [(tr, va)]
     allv = tr + va

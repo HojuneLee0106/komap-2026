@@ -78,6 +78,39 @@ def to_orig(pred, hw):
     return cv2.resize(pred, (hw[1], hw[0]), interpolation=cv2.INTER_NEAREST)
 
 
+@torch.no_grad()
+def calibrate_bias(model, items, cfg, n_cls, grid=(-0.8, -0.6, -0.4, -0.2, 0.0,
+                                                   0.2, 0.4, 0.6, 0.8), rounds=2):
+    """클래스별 logit 보정값을 검증셋에서 좌표상승으로 탐색한다.
+
+    argmax는 클래스 간 확률 크기만 비교하므로, 소수 클래스에 치우친 가중 학습 뒤에는
+    결정 경계가 어긋나 있을 수 있다. 학습 없이 추론만 다시 하면 되는 보정이다.
+    검증셋에 맞추는 것이므로 과적합 여지가 있다 — fold별로 따로 구하고,
+    보정 전/후를 함께 기록해 실제 이득인지 확인할 것.
+    """
+    L = [infer_logits(model, normalize_full(it), cfg, n_cls) for it in items]
+    G = [it['label_eval'] for it in items]
+    HW = [it['orig_hw'] for it in items]
+
+    def score(b):
+        t = torch.tensor(b, dtype=torch.float32)[:, None, None]
+        preds = [to_4class(to_orig((l + t).argmax(0).numpy().astype(np.uint8), hw), cfg)
+                 for l, hw in zip(L, HW)]
+        return evaluate(preds, G, 4)['mIoU']
+
+    bias = np.zeros(n_cls, np.float32)
+    best = score(bias)
+    base = best
+    for _ in range(rounds):
+        for c in range(n_cls):
+            for v in grid:
+                b = bias.copy(); b[c] = v
+                sc = score(b)
+                if sc > best + 1e-5:
+                    best, bias = sc, b
+    return bias, base, best
+
+
 def validate(model, items, cfg, n_cls):
     # 원본 해상도로 되돌린 뒤 후처리·채점한다 (두께 임계값도 원본 기준)
     preds = [to_4class(to_orig(predict_image(model, normalize_full(it), cfg, n_cls),
@@ -143,6 +176,16 @@ def train_fold(cfg, fold, tr_items, va_items):
             json.dump(hist, open(os.path.join(out_dir, f'fold{fold}_hist.json'), 'w'),
                       indent=1, ensure_ascii=False)
 
+    if cfg.calibrate:
+        ck = torch.load(os.path.join(out_dir, f'fold{fold}.pth'), map_location='cpu')
+        model.load_state_dict(ck['model'])
+        bias, before, after = calibrate_bias(model, va_items, cfg, n_cls)
+        print(f'  [보정] {np.round(bias, 2)} | {before:.4f} -> {after:.4f} '
+              f'({after - before:+.4f})')
+        ck['bias'] = bias.tolist(); ck['mIoU_calibrated'] = after
+        torch.save(ck, os.path.join(out_dir, f'fold{fold}.pth'))
+        best = after
+
     mins = (time.time() - t0) / 60
     print(f'[fold {fold}] best mIoU {best:.4f} | {mins:.1f}분')
     return best, mins
@@ -159,7 +202,7 @@ def main(cfg=None):
         s, m = train_fold(cfg, f, *folds[f])
         scores.append(s); times.append(m)
     print(f'\n=== {cfg.exp} | mode={cfg.mode} loss={cfg.loss} crop={cfg.crop} '
-          f'scale={cfg.scale} encoder={cfg.encoder} ===')
+          f'scale={cfg.scale} tw={cfg.target_width} encoder={cfg.encoder} ===')
     print(f'fold별: {np.round(scores, 4)}')
     print(f'평균 {np.mean(scores):.4f} | 표준편차 {np.std(scores):.4f} | 총 {sum(times):.0f}분')
     summary = {'exp': cfg.exp, 'cfg': vars(cfg), 'scores': scores,
