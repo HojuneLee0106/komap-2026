@@ -83,8 +83,10 @@ def to_train_label(lab, mode):
 
 def build_transform(cfg):
     # 버전 차이에 안전한 변환만 사용한다 (Affine/ShiftScaleRotate는 API가 자주 바뀜)
-    return A.Compose([
-        A.RandomScale(scale_limit=0.2, p=0.5),
+    tf = []
+    if getattr(cfg, 'aug_scale', 0.0) > 0:
+        tf.append(A.RandomScale(scale_limit=cfg.aug_scale, p=0.5))
+    return A.Compose(tf + [
         A.PadIfNeeded(min_height=cfg.crop, min_width=cfg.crop,
                       border_mode=cv2.BORDER_REFLECT_101),
         A.RandomCrop(height=cfg.crop, width=cfg.crop),

@@ -35,6 +35,9 @@ class CFG:
                          # 평가는 항상 원본 해상도에서 수행한다.
     crop: int = 512
     overlap: float = 0.25
+    aug_scale: float = 0.2   # RandomScale 폭. 0이면 끈다.
+                             # 공정 Si 폭이 약 2.5px라 스케일 증강이 라벨을
+                             # 뭉갤 수 있어 반드시 켠 경우/끈 경우를 비교할 것.
 
     # 학습
     batch: int = 8
