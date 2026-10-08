@@ -23,7 +23,13 @@ def _load_encoder_weights(encoder, path):
                if k not in sd and not k.startswith(drop)]
     unexpected = [k for k in sd if k not in own]
 
-    encoder.load_state_dict(sd, strict=False)   # 반환값은 쓰지 않는다
+    # smp의 encoder마다 load_state_dict 시그니처가 다르다.
+    #   EfficientNetEncoder: 반환값이 없다
+    #   MixVisionTransformerEncoder: strict 인자를 받지 않는다
+    try:
+        encoder.load_state_dict(sd, strict=False)
+    except TypeError:
+        encoder.load_state_dict(sd)
     return missing, unexpected
 
 
