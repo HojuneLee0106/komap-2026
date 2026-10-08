@@ -63,6 +63,12 @@ class CFG:
     calibrate: bool = True   # 검증셋에서 클래스별 logit 보정값을 탐색한다.
                              # 지금 모델은 공정 Si를 과예측 중(8.4% vs 정답 6.9%).
 
+    sample_weight: str = 'uniform'   # 'uniform' | 'fine'
+    # 'fine': Al3Ni가 잘게 쪼개진(둘레/면적이 큰) 이미지를 더 자주 뽑는다.
+    # 90장 중 14장에서 Al3Ni 반두께가 1.0px(폭 2px)까지 얇아지는데 13장이
+    # 675x480이다. 최악 이미지(A16, mIoU 0.50)가 전부 이 집단에 속한다.
+    sample_power: float = 1.0        # 가중치 지수. 클수록 어려운 이미지에 치우친다.
+
     seed: int = 42
     num_workers: int = 2
     exp: str = 'c1'

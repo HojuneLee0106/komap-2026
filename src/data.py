@@ -100,17 +100,42 @@ def build_transform(cfg):
     ])
 
 
+def fineness(items, cls=1):
+    """이미지별 '조직이 얼마나 잘게 쪼개졌나' = 해당 상의 둘레/면적.
+    기본은 Al3Ni(1). 값이 클수록 얇은 그물 형태다."""
+    k = np.ones((3, 3), np.uint8)
+    out = []
+    for it in items:
+        s = (it['label'] == cls)
+        if s.sum() < 100:
+            out.append(0.0); continue
+        b = (cv2.dilate(s.astype(np.uint8), k).astype(bool) & ~s).sum()
+        out.append(float(b / s.sum()))
+    return np.array(out, np.float64)
+
+
 class PatchDataset(Dataset):
     """전체 이미지를 RAM에 올려두고 매 step 랜덤 크롭을 뽑는다."""
     def __init__(self, items, cfg, length):
         self.items, self.cfg, self.length = items, cfg, length
         self.tf = build_transform(cfg)
+        self.p = None
+        if getattr(cfg, 'sample_weight', 'uniform') == 'fine':
+            f = fineness(items)
+            w = (f / (f.mean() + 1e-9)) ** getattr(cfg, 'sample_power', 1.0)
+            self.p = w / w.sum()
+            top = np.argsort(-self.p)[:3]
+            print('  [샘플링] 가중 상위 3장 비중 '
+                  + ', '.join(f'{items[i]["stem"]} {self.p[i]*100:.1f}%' for i in top)
+                  + f' (균등이면 {100/len(items):.1f}%)')
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, _):
-        it = self.items[np.random.randint(len(self.items))]
+        i = (np.random.randint(len(self.items)) if self.p is None
+             else np.random.choice(len(self.items), p=self.p))
+        it = self.items[i]
         out = self.tf(image=it['image'], mask=to_train_label(it['label'], self.cfg.mode))
         x = (out['image'].astype(np.float32) - it['mean']) / it['std']
         return torch.from_numpy(x)[None], torch.from_numpy(out['mask'].astype(np.int64))
