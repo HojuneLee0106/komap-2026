@@ -12,7 +12,7 @@ from scipy import ndimage as ndi
 from .config import CFG, CLASS_NAMES
 from .data import make_folds, normalize_full, set_seed
 from .ensemble import predict_logits, collect, _load
-from .train import to_orig
+from .train import to_hard
 from .postprocess import to_4class
 
 K = np.ones((3, 3), np.uint8)
@@ -27,8 +27,7 @@ def run(work_dir=None, exps=None, fold=0, base_cfg=None):
     cfg0 = _load(ckpts[0])[1]
 
     L = predict_logits(ckpts, va)
-    preds = [to_4class(to_orig(l.argmax(0).numpy().astype(np.uint8), it['orig_hw']), cfg0)
-             for l, it in zip(L, va)]
+    preds = [to_4class(to_hard(l, it['orig_hw']), cfg0) for l, it in zip(L, va)]
     gts = [it['label_eval'] for it in va]
 
     # ── 혼동행렬 (행=정답, 열=예측, 행 기준 %) ──

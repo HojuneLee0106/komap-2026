@@ -71,11 +71,35 @@ def predict_image(model, x, cfg, n_cls):
 
 
 def to_orig(pred, hw):
-    """확대 입력으로 추론한 결과를 원본 해상도로 되돌린다.
-    보간이 섞이면 팔레트 밖 값이 생기므로 반드시 NEAREST."""
+    """(구) 하드 라벨을 원본 해상도로 되돌린다. NEAREST 필수.
+    scale>1에서는 logit_to_orig를 써야 한다 — 아래 설명 참고."""
     if pred.shape == tuple(hw):
         return pred
     return cv2.resize(pred, (hw[1], hw[0]), interpolation=cv2.INTER_NEAREST)
+
+
+def logit_to_orig(logit, hw):
+    """logit을 원본 해상도로 되돌린 뒤 하드 라벨을 만든다.
+
+    왜 argmax 순서가 중요한가:
+      확대(scale=2) 입력에서 argmax를 먼저 하고 NEAREST로 줄이면 2x2 네 표 중
+      한 표만 채택되고 나머지 세 표는 버려진다. 서브픽셀 결정이 사라지는 것이다.
+      logit을 면적평균(area)으로 줄인 뒤 argmax하면 네 표의 평균으로 결정한다.
+      GT 90장 측정: 1px 경계띠가 전체 픽셀의 31.1%이고, 경계띠 정확도와 mIoU는
+      67% -> 0.777 / 80% -> 0.855 / 88% -> 0.90 으로 거의 선형이다. 즉 지금
+      모델의 오차는 사실상 전부 이 띠에 있고, 띠의 결정을 얼마나 잘게 하느냐가
+      점수 전부를 좌우한다. scale=1이면 이 함수는 아무것도 하지 않는다.
+    """
+    H, W = int(hw[0]), int(hw[1])
+    if tuple(logit.shape[-2:]) == (H, W):
+        return logit
+    mode = 'area' if logit.shape[-1] > W else 'bilinear'
+    kw = {} if mode == 'area' else dict(align_corners=False)
+    return F.interpolate(logit[None].float(), size=(H, W), mode=mode, **kw)[0]
+
+
+def to_hard(logit, hw):
+    return logit_to_orig(logit, hw).argmax(0).numpy().astype(np.uint8)
 
 
 @torch.no_grad()
@@ -88,14 +112,14 @@ def calibrate_bias(model, items, cfg, n_cls, grid=(-0.8, -0.6, -0.4, -0.2, 0.0,
     검증셋에 맞추는 것이므로 과적합 여지가 있다 — fold별로 따로 구하고,
     보정 전/후를 함께 기록해 실제 이득인지 확인할 것.
     """
-    L = [infer_logits(model, normalize_full(it), cfg, n_cls) for it in items]
+    # 보정 탐색은 수십 번 반복되므로 원본 해상도 logit을 미리 만들어 둔다.
+    L = [logit_to_orig(infer_logits(model, normalize_full(it), cfg, n_cls),
+                       it['orig_hw']) for it in items]
     G = [it['label_eval'] for it in items]
-    HW = [it['orig_hw'] for it in items]
 
     def score(b):
         t = torch.tensor(b, dtype=torch.float32)[:, None, None]
-        preds = [to_4class(to_orig((l + t).argmax(0).numpy().astype(np.uint8), hw), cfg)
-                 for l, hw in zip(L, HW)]
+        preds = [to_4class((l + t).argmax(0).numpy().astype(np.uint8), cfg) for l in L]
         return evaluate(preds, G, 4)['mIoU']
 
     bias = np.zeros(n_cls, np.float32)
@@ -113,7 +137,7 @@ def calibrate_bias(model, items, cfg, n_cls, grid=(-0.8, -0.6, -0.4, -0.2, 0.0,
 
 def validate(model, items, cfg, n_cls):
     # 원본 해상도로 되돌린 뒤 후처리·채점한다 (두께 임계값도 원본 기준)
-    preds = [to_4class(to_orig(predict_image(model, normalize_full(it), cfg, n_cls),
+    preds = [to_4class(to_hard(infer_logits(model, normalize_full(it), cfg, n_cls),
                                it['orig_hw']), cfg)
              for it in items]
     return evaluate(preds, [it['label_eval'] for it in items], 4)

@@ -5,7 +5,7 @@ from PIL import Image
 from .config import CFG, PALETTE, SUFFIX_IN, SUFFIX_OUT
 from .data import load_split, normalize_full, set_seed
 from .model import build_model
-from .train import infer_logits, to_orig, DEVICE
+from .train import infer_logits, to_hard, DEVICE
 from .ensemble import _load
 from .postprocess import to_4class
 
@@ -100,7 +100,7 @@ def main(cfg=None, ckpts=None, exps=None):
         x = normalize_full(it)
         logit = sum(infer_logits(m, x, mc, n_cls) + b[:, None, None]
                     for m, mc, b in zip(models, cfgs, biases)) / len(models)
-        pred = to_orig(logit.argmax(0).numpy().astype(np.uint8), it['orig_hw'])
+        pred = to_hard(logit, it['orig_hw'])
         save_mask(to_4class(pred, ref), it['path'], out_dir)
         print('  ->', it['stem'])
 

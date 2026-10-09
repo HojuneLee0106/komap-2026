@@ -13,7 +13,7 @@ import numpy as np, torch
 from .config import CFG
 from .data import make_folds, normalize_full, set_seed
 from .model import build_model
-from .train import infer_logits, to_orig, DEVICE
+from .train import infer_logits, to_hard, DEVICE
 from .postprocess import to_4class
 from .metrics import evaluate
 from .config import CLASS_NAMES
@@ -132,8 +132,7 @@ def eval_on_fold(work_dir, exps, fold=0, base_cfg=None, class_weights=False,
 
     L = predict_logits(ckpts, va)
     cfg0 = _load(ckpts[0])[1]
-    preds = [to_4class(to_orig(l.argmax(0).numpy().astype(np.uint8), it['orig_hw']), cfg0)
-             for l, it in zip(L, va)]
+    preds = [to_4class(to_hard(l, it['orig_hw']), cfg0) for l, it in zip(L, va)]
     r = evaluate(preds, [it['label_eval'] for it in va], 4)
     print(f'   ─────────────────────────')
     print(f'   단순평균 앙상블  {r["mIoU"]:.4f}  (±{r["std"]:.3f}, 최악 {r["worst"]:.3f})')
