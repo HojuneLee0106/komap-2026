@@ -6,6 +6,7 @@ from .config import CFG, PALETTE, SUFFIX_IN, SUFFIX_OUT
 from .data import load_split, normalize_full, set_seed
 from .model import build_model
 from .train import infer_logits, to_orig, DEVICE
+from .ensemble import _load
 from .postprocess import to_4class
 
 PAL = np.array(PALETTE, np.uint8)
@@ -73,30 +74,37 @@ def main(cfg=None, ckpts=None, exps=None):
             ckpts = sorted(glob.glob(f'{run_dir}/fold*.pth'))
     assert ckpts, f'체크포인트 없음: {run_dir}'
 
-    models, biases = [], []
+    # 체크포인트마다 자기 설정(arch/encoder)을 들고 있으므로 그걸로 복원한다.
+    # 데이터 해상도를 바꾸는 설정(scale/target_width/in_mode)은 전부 같아야 한다.
+    models, biases, cfgs = [], [], []
     for c in ckpts:
-        sd = torch.load(c, map_location='cpu')
-        biases.append(torch.tensor(sd.get('bias', [0.0] * n_cls), dtype=torch.float32))
-        m = build_model(cfg, n_cls).to(DEVICE).to(memory_format=torch.channels_last)
-        m.load_state_dict(sd['model']); m.eval()
-        models.append(m)
-        print(f'  {os.path.basename(c)} (val mIoU {sd.get("mIoU", float("nan")):.4f})')
+        m, mc, bias, score = _load(c)
+        models.append(m); biases.append(bias); cfgs.append(mc)
+        print(f'  {os.path.basename(os.path.dirname(c))}/{os.path.basename(c)}  '
+              f'{mc.arch}+{mc.encoder}  (val mIoU {score:.4f})')
 
-    test = load_split(cfg.data_root, 'test', with_mask=False,
-                      scale=cfg.scale, target_width=cfg.target_width,
-                      in_mode=cfg.in_mode)
+    ref = cfgs[0]
+    for mc in cfgs[1:]:
+        assert (mc.scale, mc.target_width, mc.in_mode, mc.mode) == \
+               (ref.scale, ref.target_width, ref.in_mode, ref.mode), \
+               f'데이터 설정이 다른 모델은 섞을 수 없다: {mc.exp}'
+    n_cls = 4 if ref.mode == '4class' else 3
+
+    test = load_split(ref.data_root, 'test', with_mask=False,
+                      scale=ref.scale, target_width=ref.target_width,
+                      in_mode=ref.in_mode)
     out_dir = os.path.join(run_dir, 'submission')
     os.makedirs(out_dir, exist_ok=True)
 
     for it in test:
         x = normalize_full(it)
-        logit = sum(infer_logits(m, x, cfg, n_cls) + b[:, None, None]
-                    for m, b in zip(models, biases)) / len(models)
+        logit = sum(infer_logits(m, x, mc, n_cls) + b[:, None, None]
+                    for m, mc, b in zip(models, cfgs, biases)) / len(models)
         pred = to_orig(logit.argmax(0).numpy().astype(np.uint8), it['orig_hw'])
-        save_mask(to_4class(pred, cfg), it['path'], out_dir)
+        save_mask(to_4class(pred, ref), it['path'], out_dir)
         print('  ->', it['stem'])
 
-    if verify(out_dir, f'{cfg.data_root}/test/images'):
+    if verify(out_dir, f'{ref.data_root}/test/images'):
         make_zip(out_dir, os.path.join(run_dir, 'results.zip'))
     else:
         print('검증에 실패해 zip을 만들지 않았다.')
