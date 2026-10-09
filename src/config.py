@@ -62,6 +62,11 @@ class CFG:
     warmup_epochs: int = 3
     loss: str = 'wce_dice'     # 'ce' | 'wce' | 'wce_dice' | 'ce_lovasz'
     loss_weights: tuple = (0.5, 0.5)
+    boundary_weight: float = 0.0
+    # >0이면 1px 경계띠 픽셀의 CE 가중치를 (1+이 값)배로 올린다.
+    # GT 90장: 경계띠는 전체 픽셀의 31.1%, 경계띠 정확도->mIoU가 67%->0.777,
+    # 80%->0.855, 88%->0.900으로 거의 선형. 현재 경계띠 정확도 66.6%로
+    # 남은 오차가 사실상 전부 여기 있다. 2.0 / 4.0을 비교해 볼 것.
 
     # 검증
     use_all: bool = False   # True면 90장 전부로 학습하고 검증을 건너뛴다(최종 제출용).

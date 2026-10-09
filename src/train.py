@@ -162,7 +162,8 @@ def train_fold(cfg, fold, tr_items, va_items):
           f'class frac {np.round(frac * 100, 2)} | weight {np.round(w, 3)}')
 
     model = build_model(cfg, n_cls).to(DEVICE).to(memory_format=torch.channels_last)
-    crit = build_loss(cfg.loss, w, DEVICE, cfg.loss_weights)
+    crit = build_loss(cfg.loss, w, DEVICE, cfg.loss_weights,
+                      getattr(cfg, 'boundary_weight', 0.0))
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scaler = torch.amp.GradScaler('cuda', enabled=(DEVICE == 'cuda' and not USE_BF16))
 
