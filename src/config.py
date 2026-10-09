@@ -71,6 +71,7 @@ class CFG:
     # 675x480이다. 최악 이미지(A16, mIoU 0.50)가 전부 이 집단에 속한다.
     sample_power: float = 1.0        # 가중치 지수. 클수록 어려운 이미지에 치우친다.
 
+    resume: bool = True      # fold{n}.pth가 이미 있으면 그 fold는 건너뛴다
     seed: int = 42
     num_workers: int = 2
     exp: str = 'c1'

@@ -124,6 +124,15 @@ def train_fold(cfg, fold, tr_items, va_items):
     out_dir = os.path.join(cfg.work_dir, cfg.exp)
     os.makedirs(out_dir, exist_ok=True)
 
+    ck_path = os.path.join(out_dir, f'fold{fold}.pth')
+    if getattr(cfg, 'resume', True) and os.path.exists(ck_path):
+        # 세션이 끊겨도 fold 단위로 이어서 돌 수 있게 한다.
+        # 다시 학습하려면 cfg.resume=False.
+        ck = torch.load(ck_path, map_location='cpu')
+        sc = ck.get('mIoU_calibrated', ck.get('mIoU', 0.0))
+        print(f'[fold {fold}] 건너뜀 — 체크포인트 있음 (mIoU {sc:.4f})')
+        return sc, 0.0
+
     w, frac = class_weights(tr_items, cfg.mode, n_cls)
     print(f'[fold {fold}] train {len(tr_items)} / val {len(va_items)} | '
           f'class frac {np.round(frac * 100, 2)} | weight {np.round(w, 3)}')
