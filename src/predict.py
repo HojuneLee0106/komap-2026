@@ -83,7 +83,8 @@ def main(cfg=None, ckpts=None, exps=None):
         print(f'  {os.path.basename(c)} (val mIoU {sd.get("mIoU", float("nan")):.4f})')
 
     test = load_split(cfg.data_root, 'test', with_mask=False,
-                      scale=cfg.scale, target_width=cfg.target_width)
+                      scale=cfg.scale, target_width=cfg.target_width,
+                      in_mode=cfg.in_mode)
     out_dir = os.path.join(run_dir, 'submission')
     os.makedirs(out_dir, exist_ok=True)
 

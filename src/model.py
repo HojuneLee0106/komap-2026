@@ -9,7 +9,9 @@ class GrayWrapper(nn.Module):
         super().__init__(); self.net = net
 
     def forward(self, x):
-        return self.net(x.repeat(1, 3, 1, 1))
+        if x.shape[1] == 1:        # 그레이스케일이면 3채널로 복제
+            x = x.repeat(1, 3, 1, 1)
+        return self.net(x)
 
 
 def _load_encoder_weights(encoder, path):

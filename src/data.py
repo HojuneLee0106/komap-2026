@@ -4,6 +4,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 import albumentations as A
 from sklearn.model_selection import KFold
+from skimage.filters import sato
 
 from .config import PALETTE, SUFFIX_IN, SUFFIX_OUT
 
@@ -28,7 +29,35 @@ def rgb_to_label(rgb):
     return lab
 
 
-def load_split(root, split, with_mask=True, scale=1.0, target_width=0):
+def ridge_channels(img):
+    """[원본, 얇은 선 강조, 국소 대비] 3채널. 전부 uint8.
+
+    공정 Si·Al3Ni는 어두운 가는 선으로 나타나므로 black_ridges=True.
+    sigmas는 실측한 반두께(1~3px) 범위에 맞췄다.
+    """
+    f = img.astype(np.float32) / 255.0
+    r = sato(f, sigmas=(1, 2, 3), black_ridges=True)
+    r = r / (r.max() + 1e-9)
+    blur = cv2.GaussianBlur(img, (0, 0), 5)
+    lc = np.clip(127 + (img.astype(np.int16) - blur.astype(np.int16)) * 2, 0, 255)
+    return np.dstack([img, (r * 255).astype(np.uint8), lc.astype(np.uint8)])
+
+
+def _cached_ridge(path, img):
+    c = path.replace('.png', '.ridge.npy')
+    if os.path.exists(c):
+        a = np.load(c)
+        if a.shape[:2] == img.shape:
+            return a
+    a = ridge_channels(img)
+    try:
+        np.save(c, a)
+    except OSError:
+        pass
+    return a
+
+
+def load_split(root, split, with_mask=True, scale=1.0, target_width=0, in_mode='gray'):
     """scale>1이면 모델 입력·학습 라벨만 확대한다.
     'label_eval'과 'orig_hw'는 항상 원본 해상도 — 채점은 원본에서 이뤄진다."""
     items = []
@@ -53,12 +82,17 @@ def load_split(root, split, with_mask=True, scale=1.0, target_width=0):
         else:
             img, lab = img0, lab0
 
+        if in_mode == 'ridge':
+            img = _cached_ridge(ip, img) if abs((target_width / img.shape[1] if target_width else scale) - 1.0) < 1e-6 \
+                  else ridge_channels(img)
+
         items.append({
             'stem': stem, 'path': ip,
             'alloy': stem.split('_')[0], 'step': stem.split('_')[1],
             'image': img, 'label': lab,          # 모델 입력 해상도
             'label_eval': lab0, 'orig_hw': img0.shape,   # 원본 해상도 (채점용)
-            'mean': float(img.mean()), 'std': float(img.std()) + 1e-6,
+            'mean': float(img[..., 0].mean()) if img.ndim == 3 else float(img.mean()),
+            'std': (float(img[..., 0].std()) if img.ndim == 3 else float(img.std())) + 1e-6,
         })
     assert items, f'{root}/{split}/images 에 파일이 없다'
     return items
@@ -66,8 +100,9 @@ def load_split(root, split, with_mask=True, scale=1.0, target_width=0):
 
 def make_folds(cfg):
     """반환: [(train_items, val_items), ...]"""
-    tr = load_split(cfg.data_root, 'train', scale=cfg.scale, target_width=cfg.target_width)
-    va = load_split(cfg.data_root, 'valid', scale=cfg.scale, target_width=cfg.target_width)
+    kw = dict(scale=cfg.scale, target_width=cfg.target_width, in_mode=cfg.in_mode)
+    tr = load_split(cfg.data_root, 'train', **kw)
+    va = load_split(cfg.data_root, 'valid', **kw)
     if cfg.use_all:
         # 최종 제출용: 90장 전부로 학습한다. 검증셋은 학습에 포함돼 있으므로
         # 진행 확인용일 뿐이고 모델 선택 기준으로 쓰면 안 된다(train.py가
@@ -142,14 +177,26 @@ class PatchDataset(Dataset):
              else np.random.choice(len(self.items), p=self.p))
         it = self.items[i]
         out = self.tf(image=it['image'], mask=to_train_label(it['label'], self.cfg.mode))
-        x = (out['image'].astype(np.float32) - it['mean']) / it['std']
-        return torch.from_numpy(x)[None], torch.from_numpy(out['mask'].astype(np.int64))
+        x = out['image'].astype(np.float32)
+        if x.ndim == 2:
+            x = (x - it['mean']) / it['std']
+            x = x[None]
+        else:                      # (H,W,3) -> (3,H,W). 0번 채널만 이미지 통계로 정규화
+            x = x.transpose(2, 0, 1)
+            x[0] = (x[0] - it['mean']) / it['std']
+            x[1:] = x[1:] / 127.5 - 1.0
+        return torch.from_numpy(np.ascontiguousarray(x)), torch.from_numpy(out['mask'].astype(np.int64))
 
 
 def normalize_full(it):
-    """추론용. 전체 이미지를 1x1xHxW 텐서로."""
-    x = (it['image'].astype(np.float32) - it['mean']) / it['std']
-    return torch.from_numpy(x)[None, None]
+    """추론용. 1xCxHxW 텐서."""
+    x = it['image'].astype(np.float32)
+    if x.ndim == 2:
+        return torch.from_numpy((x - it['mean']) / it['std'])[None, None]
+    x = x.transpose(2, 0, 1)
+    x[0] = (x[0] - it['mean']) / it['std']
+    x[1:] = x[1:] / 127.5 - 1.0
+    return torch.from_numpy(np.ascontiguousarray(x))[None]
 
 
 def class_weights(items, mode, n_cls):
