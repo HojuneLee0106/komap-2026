@@ -21,6 +21,10 @@ class CFG:
     # 과제 구성
     mode: str = '4class'       # '4class' | '3class' (Si 합쳐 학습 후 두께로 분리)
     si_thresh: float = 8.0     # 3class 전용. 성분 최대 반두께(px) 임계값
+    min_sip_frac: float = 0.002
+    # 초정 Si 예측 면적이 이 비율 미만이면 공정 Si로 돌린다. 0이면 끈다.
+    # 근거: GT 90장 중 초정 Si 부재 2장, 존재하는 88장의 최소 면적비 1.53%.
+    # 부재 이미지에 1픽셀만 흘려도 그 이미지 점수가 0.25 깎인다.
 
     # 모델
     arch: str = 'unet'   # unet | unetpp | deeplabv3plus | manet | fpn | pspnet | linknet
@@ -74,6 +78,11 @@ class CFG:
     # 90장 중 14장에서 Al3Ni 반두께가 1.0px(폭 2px)까지 얇아지는데 13장이
     # 675x480이다. 최악 이미지(A16, mIoU 0.50)가 전부 이 집단에 속한다.
     sample_power: float = 1.0        # 가중치 지수. 클수록 어려운 이미지에 치우친다.
+
+    bias_from: str = ''
+    # use_all 학습에서 쓴다. 90장 전부로 학습하면 검증셋이 학습에 포함돼 있어
+    # 자체 보정값은 과적합이다. 같은 설정의 k-fold 실험 이름을 주면 그 fold들의
+    # 보정값 평균을 그대로 가져다 쓰고 자체 보정은 건너뛴다.
 
     resume: bool = True      # fold{n}.pth가 이미 있으면 그 fold는 건너뛴다
     seed: int = 42

@@ -185,7 +185,21 @@ def train_fold(cfg, fold, tr_items, va_items):
             json.dump(hist, open(os.path.join(out_dir, f'fold{fold}_hist.json'), 'w'),
                       indent=1, ensure_ascii=False)
 
-    if cfg.calibrate:
+    src_exp = getattr(cfg, 'bias_from', '')
+    if src_exp:
+        # 90장 전부로 학습한 모델은 자체 검증이 새므로, 같은 설정의 k-fold
+        # 실험에서 구한 보정값 평균을 그대로 쓴다.
+        import glob as _g
+        bs = [torch.load(q, map_location='cpu').get('bias')
+              for q in sorted(_g.glob(os.path.join(cfg.work_dir, src_exp, 'fold*.pth')))]
+        bs = [b for b in bs if b is not None]
+        assert bs, f'보정값을 가져올 체크포인트가 없다: {src_exp}'
+        bias = np.mean(np.array(bs, np.float32), 0)
+        ck = torch.load(os.path.join(out_dir, f'fold{fold}.pth'), map_location='cpu')
+        ck['bias'] = bias.tolist()
+        torch.save(ck, os.path.join(out_dir, f'fold{fold}.pth'))
+        print(f'  [보정] {src_exp} {len(bs)}개 fold 평균 {np.round(bias, 2)} 이식')
+    elif cfg.calibrate:
         ck = torch.load(os.path.join(out_dir, f'fold{fold}.pth'), map_location='cpu')
         model.load_state_dict(ck['model'])
         bias, before, after = calibrate_bias(model, va_items, cfg, n_cls)
