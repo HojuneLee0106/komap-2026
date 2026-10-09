@@ -149,13 +149,21 @@ def train_fold(cfg, fold, tr_items, va_items):
     os.makedirs(out_dir, exist_ok=True)
 
     ck_path = os.path.join(out_dir, f'fold{fold}.pth')
+    last_path = os.path.join(out_dir, f'fold{fold}_last.pth')
+    start_ep, rs = 1, None
     if getattr(cfg, 'resume', True) and os.path.exists(ck_path):
-        # 세션이 끊겨도 fold 단위로 이어서 돌 수 있게 한다.
-        # 다시 학습하려면 cfg.resume=False.
+        # 끝까지 돈 fold만 건너뛴다. 런타임이 중간에 죽으면 fold{n}.pth에는
+        # '그때까지 최고' 상태가 남는데, 그걸 완료로 보고 건너뛰면 덜 학습된
+        # 모델이 최종 앙상블에 섞여 들어간다 — 조용히 점수를 깎는 함정이다.
         ck = torch.load(ck_path, map_location='cpu')
-        sc = ck.get('mIoU_calibrated', ck.get('mIoU', 0.0))
-        print(f'[fold {fold}] 건너뜀 — 체크포인트 있음 (mIoU {sc:.4f})')
-        return sc, 0.0
+        if ck.get('done') or 'mIoU_calibrated' in ck:
+            sc = ck.get('mIoU_calibrated', ck.get('mIoU', 0.0))
+            print(f'[fold {fold}] 건너뜀 — 끝난 체크포인트 (mIoU {sc:.4f})')
+            return sc, 0.0
+        print(f'[fold {fold}] 체크포인트는 있으나 끝나지 않았다 — 이어서 돌린다')
+    if getattr(cfg, 'resume', True) and os.path.exists(last_path):
+        rs = torch.load(last_path, map_location='cpu')
+        start_ep = int(rs['epoch']) + 1
 
     w, frac = class_weights(tr_items, cfg.mode, n_cls)
     print(f'[fold {fold}] train {len(tr_items)} / val {len(va_items)} | '
@@ -179,7 +187,15 @@ def train_fold(cfg, fold, tr_items, va_items):
         0.5 * (1 + math.cos(math.pi * (s - warm) / max(total - warm, 1))))
 
     best, hist, t0 = -1.0, [], time.time()
-    for ep in range(1, cfg.epochs + 1):
+    if rs is not None and start_ep <= cfg.epochs:
+        # optimizer 모멘텀은 버리고 가중치·스케줄만 복원한다. 상태를 통째로
+        # 저장하면 파일이 3배가 되고 Drive 쓰기가 매 검증마다 느려진다.
+        model.load_state_dict(rs['model'])
+        best, hist = rs.get('best', -1.0), rs.get('hist', [])
+        for _ in range((start_ep - 1) * cfg.steps_per_epoch):
+            sched.step()
+        print(f'[fold {fold}] epoch {start_ep}부터 재개 (지금까지 best {best:.4f})')
+    for ep in range(start_ep, cfg.epochs + 1):
         model.train(); run = 0.0
         for xb, yb in tqdm(dl, desc=f'f{fold} ep{ep}', leave=False):
             xb = xb.to(DEVICE, non_blocking=True).to(memory_format=torch.channels_last)
@@ -209,6 +225,8 @@ def train_fold(cfg, fold, tr_items, va_items):
                            os.path.join(out_dir, f'fold{fold}.pth'))
             json.dump(hist, open(os.path.join(out_dir, f'fold{fold}_hist.json'), 'w'),
                       indent=1, ensure_ascii=False)
+            torch.save({'model': model.state_dict(), 'epoch': ep,
+                        'best': best, 'hist': hist}, last_path)
 
     src_exp = getattr(cfg, 'bias_from', '')
     if src_exp:
@@ -233,6 +251,10 @@ def train_fold(cfg, fold, tr_items, va_items):
         ck['bias'] = bias.tolist(); ck['mIoU_calibrated'] = after
         torch.save(ck, os.path.join(out_dir, f'fold{fold}.pth'))
         best = after
+
+    ck = torch.load(ck_path, map_location='cpu')
+    ck['done'] = True
+    torch.save(ck, ck_path)
 
     mins = (time.time() - t0) / 60
     print(f'[fold {fold}] best mIoU {best:.4f} | {mins:.1f}분')

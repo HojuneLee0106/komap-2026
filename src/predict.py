@@ -5,7 +5,7 @@ from PIL import Image
 from .config import CFG, PALETTE, SUFFIX_IN, SUFFIX_OUT
 from .data import load_split, normalize_full, set_seed
 from .model import build_model
-from .train import infer_logits, to_hard, DEVICE
+from .train import infer_logits, logit_to_orig, DEVICE
 from .ensemble import _load
 from .postprocess import to_4class
 
@@ -85,24 +85,35 @@ def main(cfg=None, ckpts=None, exps=None):
 
     ref = cfgs[0]
     for mc in cfgs[1:]:
-        assert (mc.scale, mc.target_width, mc.in_mode, mc.mode) == \
-               (ref.scale, ref.target_width, ref.in_mode, ref.mode), \
-               f'데이터 설정이 다른 모델은 섞을 수 없다: {mc.exp}'
+        assert mc.mode == ref.mode, f'3class와 4class는 섞을 수 없다: {mc.exp}'
     n_cls = 4 if ref.mode == '4class' else 3
 
-    test = load_split(ref.data_root, 'test', with_mask=False,
-                      scale=ref.scale, target_width=ref.target_width,
-                      in_mode=ref.in_mode)
+    # 입력 해상도가 다른 모델도 함께 섞는다. 각자의 logit을 원본 격자로 되돌린
+    # 뒤에 더하기 때문이다(logit_to_orig). 예전에는 argmax를 모델 해상도에서
+    # 먼저 해버려서 scale이 같은 모델끼리만 섞을 수 있었다.
+    feeds = {}
+    for mc in cfgs:
+        k = (mc.scale, mc.target_width, mc.in_mode)
+        if k not in feeds:
+            feeds[k] = load_split(ref.data_root, 'test', with_mask=False,
+                                  scale=k[0], target_width=k[1], in_mode=k[2])
+            print(f'  [입력] scale={k[0]} tw={k[1]} in={k[2]} — {len(feeds[k])}장')
+    base = feeds[(ref.scale, ref.target_width, ref.in_mode)]
     out_dir = os.path.join(run_dir, 'submission')
     os.makedirs(out_dir, exist_ok=True)
 
-    for it in test:
-        x = normalize_full(it)
-        logit = sum(infer_logits(m, x, mc, n_cls) + b[:, None, None]
-                    for m, mc, b in zip(models, cfgs, biases)) / len(models)
-        pred = to_hard(logit, it['orig_hw'])
-        save_mask(to_4class(pred, ref), it['path'], out_dir)
-        print('  ->', it['stem'])
+    for i, it0 in enumerate(base):
+        hw = it0['orig_hw']
+        logit = None
+        for m, mc, b in zip(models, cfgs, biases):
+            it = feeds[(mc.scale, mc.target_width, mc.in_mode)][i]
+            assert it['stem'] == it0['stem'], '해상도별 목록 순서가 어긋났다'
+            l = logit_to_orig(infer_logits(m, normalize_full(it), mc, n_cls),
+                              hw) + b[:, None, None]
+            logit = l if logit is None else logit + l
+        pred = (logit / len(models)).argmax(0).numpy().astype(np.uint8)
+        save_mask(to_4class(pred, ref), it0['path'], out_dir)
+        print('  ->', it0['stem'])
 
     if verify(out_dir, f'{ref.data_root}/test/images'):
         make_zip(out_dir, os.path.join(run_dir, 'results.zip'))
