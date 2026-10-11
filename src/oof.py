@@ -317,6 +317,25 @@ def summarize(cfg=None, path=None):
         if den:
             L.append(f'  r={sum((x-mx)*(t-my) for x,t in p)/den:+.3f}  {k}')
 
+    # 성분 크기별 재현율 — '아주 작은 공정 Si가 더 틀리는가'
+    cpath = os.path.join(os.path.dirname(path), 'components.csv')
+    if os.path.exists(cpath):
+        comps = [c for c in csv.DictReader(open(cpath, encoding='utf-8-sig'))
+                 if c.get('gt_class') == 'Si_e']
+        BUCKETS = [(0, 10), (10, 30), (30, 100), (100, 400), (400, 10 ** 9)]
+        L += ['', '[성분 크기] 공정 Si 연결성분의 면적별 재현율',
+              f'{"크기(px)":>14s} {"성분수":>8s} {"면적합":>11s} '
+              f'{"재현율":>7s} {"->Al3Ni":>8s}']
+        for lo, hi in BUCKETS:
+            sel = [c for c in comps if lo <= float(c['area_px']) < hi]
+            if not sel:
+                continue
+            a = sum(float(c['area_px']) for c in sel)
+            rec = sum(float(c['area_px']) * float(c['pred_frac_Si_e']) for c in sel) / a
+            ni = sum(float(c['area_px']) * float(c['pred_frac_Al3Ni']) for c in sel) / a
+            tag = f'{lo}~{hi}' if hi < 10 ** 9 else f'{lo}+'
+            L.append(f'{tag:>14s} {len(sel):8,d} {a:11,.0f} {rec:7.3f} {ni:8.3f}')
+
     worst = sorted((r for r in rows if num(r, 'IoU_Si_e') is not None),
                    key=lambda r: num(r, 'IoU_Si_e'))[:8]
     L += ['', '[최악 8장] 공정 Si IoU']
