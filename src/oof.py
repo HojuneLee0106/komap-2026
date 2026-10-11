@@ -142,10 +142,17 @@ COMP_COLS = (['stem', 'fold', 'gt_class', 'comp_id', 'area_px',
 
 
 def run(cfg=None, exps=('F1_upp_b5', 'F2_convnext', 'F3_mit_b2'),
-        folds=(0, 1, 2, 3, 4), comp_classes=(3, 1), min_area=4, make_zip=True):
+        folds=(0, 1, 2, 3, 4), comp_classes=(3, 1), min_area=4, make_zip=True,
+        tag=None):
+    """tag를 주면 work_dir/oof_<tag>/ 로 나간다. 안 주면 exps 이름을 이어 붙인다.
+
+    예전에는 항상 work_dir/oof/ 로 써서, 다음 실험을 돌리면 직전 기준값이
+    통째로 덮어써졌다 — 비교할 짝을 잃는다.
+    """
     cfg = cfg or CFG()
     set_seed(cfg.seed)
-    out_dir = os.path.join(cfg.work_dir, 'oof')
+    name = tag or '_'.join(exps)
+    out_dir = os.path.join(cfg.work_dir, f'oof_{name}')
     os.makedirs(out_dir, exist_ok=True)
 
     img_rows, comp_rows, used = [], [], []
@@ -231,7 +238,7 @@ def run(cfg=None, exps=('F1_upp_b5', 'F2_convnext', 'F3_mit_b2'),
 
     print(f'\n이미지 {len(img_rows)}장 / 성분 {len(comp_rows):,}개 -> {out_dir}')
     if make_zip:
-        z = os.path.join(cfg.work_dir, 'oof.zip')
+        z = os.path.join(cfg.work_dir, f'oof_{name}.zip')
         with zipfile.ZipFile(z, 'w', zipfile.ZIP_DEFLATED) as zf:
             for p in sorted(glob.glob(f'{out_dir}/*')):
                 zf.write(p, os.path.basename(p))
@@ -266,7 +273,7 @@ def _readme(used, exps, n_img, n_comp):
     return '\n'.join(L) + '\n'
 
 
-def summarize(cfg=None, path=None):
+def summarize(cfg=None, path=None, tag=None):
     """per_image.csv를 읽어 '무엇이 공정 Si를 망치는가'를 집계한다.
 
     oof.run() 직후에 부르면 된다. 새 구성을 돌린 뒤 같은 수치를 다시 재서
@@ -275,7 +282,9 @@ def summarize(cfg=None, path=None):
     """
     import statistics as st
     cfg = cfg or CFG()
-    path = path or os.path.join(cfg.work_dir, 'oof', 'per_image.csv')
+    if path is None:
+        d = f'oof_{tag}' if tag else 'oof'
+        path = os.path.join(cfg.work_dir, d, 'per_image.csv')
     rows = list(csv.DictReader(open(path, encoding='utf-8-sig')))
     num = lambda r, k: float(r[k]) if r.get(k) not in (None, '') else None
 
