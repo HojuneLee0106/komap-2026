@@ -83,8 +83,11 @@ def load_split(root, split, with_mask=True, scale=1.0, target_width=0, in_mode='
             img, lab = img0, lab0
 
         if in_mode == 'ridge':
-            img = _cached_ridge(ip, img) if abs((target_width / img.shape[1] if target_width else scale) - 1.0) < 1e-6 \
-                  else ridge_channels(img)
+            # 확대한 이미지는 캐시하지 않는다(캐시는 원본 격자 전용).
+            # sc는 위에서 원본 폭 w0 기준으로 구한 값을 그대로 쓴다 — img.shape[1]은
+            # 이미 리사이즈된 폭이라 target_width를 쓰면 항상 1.0이 나와서
+            # 확대했는데도 원본 캐시를 집어오게 된다.
+            img = _cached_ridge(ip, img) if abs(sc - 1.0) < 1e-6 else ridge_channels(img)
 
         items.append({
             'stem': stem, 'path': ip,
