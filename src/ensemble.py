@@ -25,7 +25,12 @@ def _load(ckpt_path):
     sd = torch.load(ckpt_path, map_location='cpu')
     c = CFG(**{k: v for k, v in sd['cfg'].items() if k in CFG.__dataclass_fields__})
     n_cls = 4 if c.mode == '4class' else 3
-    m = build_model(c, n_cls).to(DEVICE).to(memory_format=torch.channels_last)
+    # 추론에는 사전학습 가중치가 필요 없다. 바로 다음 줄에서 체크포인트로
+    # 전부 덮어쓰기 때문이다. pretrained를 켠 채로 두면 weight_dir에 파일이
+    # 있어야만 추론이 되고(없으면 build_model이 assert로 죽는다), 쓰지도 않을
+    # 가중치를 Drive에서 읽느라 모델마다 수 초씩 더 걸린다.
+    c_infer = replace(c, pretrained=False)
+    m = build_model(c_infer, n_cls).to(DEVICE).to(memory_format=torch.channels_last)
     m.load_state_dict(sd['model']); m.eval()
     bias = torch.tensor(sd.get('bias', [0.0] * n_cls), dtype=torch.float32)
     return m, c, bias, sd.get('mIoU_calibrated', sd.get('mIoU', float('nan')))
