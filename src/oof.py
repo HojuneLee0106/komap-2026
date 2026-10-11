@@ -49,6 +49,39 @@ def _error_map(gray, gt, pred):
     return vis
 
 
+def gray_auc(a, b):
+    """밝기 하나로 a와 b를 가를 수 있는 정도 (Mann-Whitney AUC).
+
+    0.5면 밝기로 전혀 못 가르고, 0이나 1에 가까울수록 완전히 갈린다.
+    90장 측정에서 공정 Si는 Al3Ni보다 항상 어두워 0.15 언저리가 나오는데,
+    방향을 뒤집으면 0.85다 — 밝기는 생각보다 강한 신호다. 다만 '이 사진 안에서
+    더 어둡다'가 신호지 절대 밝기값은 아무 예측력이 없다(이미지별 IoU와 r=-0.01).
+    """
+    ha = np.bincount(a.ravel(), minlength=256).astype(np.float64)
+    hb = np.bincount(b.ravel(), minlength=256).astype(np.float64)
+    na, nb = ha.sum(), hb.sum()
+    if na == 0 or nb == 0:
+        return None
+    below = np.cumsum(hb) - hb                 # b 중 a보다 어두운 것
+    return float((ha * (below + hb / 2)).sum() / (na * nb))
+
+
+def adjacency_recall(gt, pred, near_px=3):
+    """Al3Ni에 붙은 공정 Si와 떨어진 공정 Si의 재현율을 따로 잰다.
+
+    90장 OOF 측정: 붙은 쪽 0.606 / 떨어진 쪽 0.768로 16점 차이가 나고,
+    90장 중 76장에서 같은 방향이다. 비키가 말한 수지상간 동시정출이
+    모델 오류로 그대로 나타난 것이다. 이 격차가 줄어드는지가
+    구조·대비 입력(in_mode='ridge')이 통했는지 판정하는 기준이다.
+    """
+    k = 2 * near_px + 1
+    ni = cv2.dilate((gt == 1).astype(np.uint8), np.ones((k, k), np.uint8))
+    e = (gt == 3)
+    near, far = e & (ni > 0), e & (ni == 0)
+    r = lambda m: round(float((pred[m] == 3).mean()), 4) if m.any() else ''
+    return r(near), r(far), int(near.sum()), int(far.sum())
+
+
 def _components(gt, pred, gray, cls, min_area=4):
     """GT에서 cls인 연결성분별 통계. 전부 벡터 연산이다 — 성분이 이미지당
     수천 개라 성분마다 루프를 돌면 끝나지 않는다."""
@@ -151,8 +184,13 @@ def run(cfg=None, exps=('F1_upp_b5', 'F2_convnext', 'F3_mit_b2'),
                             'RGB').save(f'{out_dir}/{it["stem"]}_err.png')
 
             C = np.bincount(gt.ravel() * 4 + pred.ravel(), minlength=16).reshape(4, 4)
+            rn, rf, nn, nf = adjacency_recall(gt, pred)
+            auc = gray_auc(gray[gt == 3], gray[gt == 1])
             row = {'stem': it['stem'], 'fold': f,
                    'mIoU': round(per_image_miou(pred, gt), 4),
+                   'recall_Si_e_near_Al3Ni': rn, 'recall_Si_e_far_Al3Ni': rf,
+                   'px_Si_e_near_Al3Ni': nn, 'px_Si_e_far_Al3Ni': nf,
+                   'gray_auc_Si_e_vs_Al3Ni': round(auc, 4) if auc else '',
                    'img_w': gt.shape[1], 'img_h': gt.shape[0]}
             for k, nm in enumerate(CLASS_NAMES):
                 p, g = (pred == k), (gt == k)
@@ -221,3 +259,67 @@ def _readme(used, exps, n_img, n_comp):
           '      img_w/img_h       이미지 크기 (675~1440px로 섞여 있어',
           '                        두께를 비교할 땐 폭으로 정규화해야 한다)']
     return '\n'.join(L) + '\n'
+
+
+def summarize(cfg=None, path=None):
+    """per_image.csv를 읽어 '무엇이 공정 Si를 망치는가'를 집계한다.
+
+    oof.run() 직후에 부르면 된다. 새 구성을 돌린 뒤 같은 수치를 다시 재서
+    인접 격차가 줄었는지 보는 것이 이 함수의 목적이다 — mIoU 한 줄로는
+    고치려던 것을 고쳤는지 알 수 없다.
+    """
+    import statistics as st
+    cfg = cfg or CFG()
+    path = path or os.path.join(cfg.work_dir, 'oof', 'per_image.csv')
+    rows = list(csv.DictReader(open(path, encoding='utf-8-sig')))
+    num = lambda r, k: float(r[k]) if r.get(k) not in (None, '') else None
+
+    L = [f'OOF 집계 — {len(rows)}장', '']
+    pair = [(num(r, 'recall_Si_e_far_Al3Ni'), num(r, 'recall_Si_e_near_Al3Ni'))
+            for r in rows]
+    pair = [(a, b) for a, b in pair if a is not None and b is not None]
+    if pair:
+        far = [a for a, _ in pair]; near = [b for _, b in pair]
+        gap = [a - b for a, b in pair]
+        L += ['[인접] 공정 Si 재현율 — Al3Ni에서 3px 안/밖',
+              f'  떨어진 것  평균 {st.mean(far):.3f}  중앙 {st.median(far):.3f}',
+              f'  붙은 것    평균 {st.mean(near):.3f}  중앙 {st.median(near):.3f}',
+              f'  격차       평균 {st.mean(gap):+.3f}  '
+              f'붙은 쪽이 나쁜 이미지 {sum(1 for v in gap if v > 0)}/{len(gap)}장',
+              '  (기준: 원해상도 3구성 앙상블에서 평균 +0.162 / 76장)', '']
+
+    auc = [num(r, 'gray_auc_Si_e_vs_Al3Ni') for r in rows]
+    auc = [max(v, 1 - v) for v in auc if v is not None]
+    if auc:
+        L += ['[밝기] 밝기만으로 공정 Si와 Al3Ni를 가르는 정도 (방향 보정 AUC)',
+              f'  중앙 {st.median(auc):.3f}  최소 {min(auc):.3f}  '
+              f'0.80 이상 {sum(1 for v in auc if v >= .8)}/{len(auc)}장', '']
+
+    y = [num(r, 'IoU_Si_e') for r in rows]
+    L += ['[상관] 이미지별 공정 Si IoU와의 상관']
+    for k in ('gray_auc_Si_e_vs_Al3Ni', 'recall_Si_e_near_Al3Ni',
+              'recall_Si_e_far_Al3Ni', 'gt_frac_Si_e', 'Si_e->Al3Ni', 'img_w'):
+        xs = [num(r, k) for r in rows]
+        p = [(x, t) for x, t in zip(xs, y) if x is not None and t is not None]
+        if len(p) < 5:
+            continue
+        mx, my = st.mean(x for x, _ in p), st.mean(t for _, t in p)
+        den = (sum((x - mx) ** 2 for x, _ in p) *
+               sum((t - my) ** 2 for _, t in p)) ** 0.5
+        if den:
+            L.append(f'  r={sum((x-mx)*(t-my) for x,t in p)/den:+.3f}  {k}')
+
+    worst = sorted((r for r in rows if num(r, 'IoU_Si_e') is not None),
+                   key=lambda r: num(r, 'IoU_Si_e'))[:8]
+    L += ['', '[최악 8장] 공정 Si IoU']
+    for r in worst:
+        L.append(f'  {r["stem"]:26s} {num(r,"IoU_Si_e"):.3f}  fold {r["fold"]}  '
+                 f'붙은것 {r.get("recall_Si_e_near_Al3Ni","")}  '
+                 f'떨어진것 {r.get("recall_Si_e_far_Al3Ni","")}')
+
+    out = '\n'.join(L)
+    print(out)
+    with open(os.path.join(os.path.dirname(path), 'summary.txt'), 'w',
+              encoding='utf-8') as fp:
+        fp.write(out + '\n')
+    return rows
