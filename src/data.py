@@ -44,15 +44,24 @@ def ridge_channels(img):
 
 
 def _cached_ridge(path, img):
-    c = path.replace('.png', '.ridge.npy')
+    """격자 크기별로 따로 캐시한다.
+
+    sato 필터가 2배 확대본에서 장당 6~8초라 90장이면 10분이 넘고, 그동안
+    GPU는 논다. 캐시를 안 하면 fold마다·추론마다 매번 다시 문다.
+    파일명에 폭을 넣어 원본과 확대본이 서로 덮어쓰지 않게 한다.
+    """
+    c = path.replace('.png', f'.ridge{img.shape[1]}.npy')
     if os.path.exists(c):
-        a = np.load(c)
-        if a.shape[:2] == img.shape:
-            return a
+        try:
+            a = np.load(c)
+            if a.shape[:2] == img.shape:
+                return a
+        except (ValueError, OSError):    # 쓰다 만 캐시는 버리고 다시 만든다
+            pass
     a = ridge_channels(img)
     try:
         np.save(c, a)
-    except OSError:
+    except OSError:                      # 읽기 전용 경로면 캐시 없이 간다
         pass
     return a
 
@@ -83,11 +92,7 @@ def load_split(root, split, with_mask=True, scale=1.0, target_width=0, in_mode='
             img, lab = img0, lab0
 
         if in_mode == 'ridge':
-            # 확대한 이미지는 캐시하지 않는다(캐시는 원본 격자 전용).
-            # sc는 위에서 원본 폭 w0 기준으로 구한 값을 그대로 쓴다 — img.shape[1]은
-            # 이미 리사이즈된 폭이라 target_width를 쓰면 항상 1.0이 나와서
-            # 확대했는데도 원본 캐시를 집어오게 된다.
-            img = _cached_ridge(ip, img) if abs(sc - 1.0) < 1e-6 else ridge_channels(img)
+            img = _cached_ridge(ip, img)
 
         items.append({
             'stem': stem, 'path': ip,
