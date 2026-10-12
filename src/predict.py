@@ -62,7 +62,7 @@ def make_zip(out_dir, zip_path):
     print(f'{zip_path} 생성 ({n}개 파일)')
 
 
-def main(cfg=None, ckpts=None, exps=None):
+def main(cfg=None, ckpts=None, exps=None, extra_bias=None):
     cfg = cfg or CFG()
     set_seed(cfg.seed)
     n_cls = 4 if cfg.mode == '4class' else 3
@@ -115,7 +115,11 @@ def main(cfg=None, ckpts=None, exps=None):
             l = logit_to_orig(infer_logits(m, normalize_full(it), mc, n_cls),
                               hw) + b[:, None, None]
             logit = l if logit is None else logit + l
-        pred = (logit / len(models)).argmax(0).numpy().astype(np.uint8)
+        logit = logit / len(models)
+        if extra_bias is not None:
+            # 앙상블 전체에 대한 클래스별 보정 (ensemble.fit_ensemble_bias 결과)
+            logit = logit + torch.tensor(extra_bias, dtype=torch.float32)[:, None, None]
+        pred = logit.argmax(0).numpy().astype(np.uint8)
         save_mask(to_4class(pred, ref), it0['path'], out_dir)
         print('  ->', it0['stem'])
 

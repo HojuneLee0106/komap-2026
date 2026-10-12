@@ -182,3 +182,66 @@ def eval_on_fold(work_dir, exps, fold=0, base_cfg=None, class_weights=False,
             print(f'\n   (fold {verify_fold}에서 과적합 검증은 같은 exps의 '
                   f'fold{verify_fold}.pth가 있어야 가능하다)')
     return r
+
+
+@torch.no_grad()
+def fit_ensemble_bias(exps, folds=(0, 3), cfg=None, grid=(-0.6, -0.4, -0.2, 0.0,
+                                                          0.2, 0.4, 0.6), rounds=3):
+    """앙상블 평균 logit에 더할 클래스별 보정값을 여러 fold에서 함께 찾는다.
+
+    지금은 모델마다 따로 보정한 뒤 평균만 낸다. 평균 낸 뒤의 결정 경계는
+    개별 모델의 그것과 다를 수 있어서, 합친 상태에서 한 번 더 맞춘다.
+
+    fold를 합쳐서 맞추는 게 핵심이다. 한 fold(18장)에 4개 값을 맞추면 그 fold에
+    과적합되지만, 두 fold(36장)에서 공통으로 좋은 값은 테스트에도 남을 가능성이
+    높다. fold별 점수를 따로 찍어주니 한쪽만 좋아지는 값이면 버릴 것.
+    """
+    cfg = cfg or CFG()
+    set_seed(cfg.seed)
+    L, G = [], []
+    for f in folds:
+        _, va = make_folds(cfg)[f]
+        ckpts = collect(cfg.work_dir, exps, f)
+        assert ckpts, f'fold {f} 체크포인트 없음'
+        print(f'[fold {f}] 모델 {len(ckpts)}개 / 검증 {len(va)}장')
+        feeds = {(cfg.scale, cfg.target_width, cfg.in_mode): va}
+
+        def feed(c, _f=f):
+            k = (c.scale, c.target_width, c.in_mode)
+            if k not in feeds:
+                feeds[k] = make_folds(replace(cfg, scale=k[0], target_width=k[1],
+                                              in_mode=k[2]))[_f][1]
+            return feeds[k]
+
+        cfg0 = replace(_load(ckpts[0])[1], si_thresh=cfg.si_thresh,
+                       min_sip_frac=getattr(cfg, 'min_sip_frac', 0.0))
+        L.append((predict_logits(ckpts, va, feed, tta=cfg.tta,
+                                 tta_flip=getattr(cfg, 'tta_flip', False)), cfg0))
+        G.append([it['label_eval'] for it in va])
+
+    def score(b):
+        t = torch.tensor(b, dtype=torch.float32)[:, None, None]
+        per = []
+        for (Lf, c0), Gf in zip(L, G):
+            preds = [to_4class((l + t).argmax(0).numpy().astype(np.uint8), c0)
+                     for l in Lf]
+            per.append(evaluate(preds, Gf, 4)['mIoU'])
+        return float(np.mean(per)), per
+
+    bias = np.zeros(4, np.float32)
+    best, per0 = score(bias)
+    base, baseper = best, per0
+    for _ in range(rounds):
+        for c in range(4):
+            for v in grid:
+                b = bias.copy(); b[c] = v
+                sc, _ = score(b)
+                if sc > best + 1e-5:
+                    best, bias = sc, b
+    _, perf = score(bias)
+    print(f'\n보정값 {np.round(bias, 2)}')
+    print(f'  합친 평균 {base:.4f} -> {best:.4f} ({best - base:+.4f})')
+    for f, a, b in zip(folds, baseper, perf):
+        print(f'  fold {f}  {a:.4f} -> {b:.4f} ({b - a:+.4f})')
+    print('  한쪽 fold만 좋아졌으면 쓰지 말 것.')
+    return bias
