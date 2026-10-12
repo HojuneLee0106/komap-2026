@@ -49,6 +49,9 @@ class CFG:
                              # scale과 동시에 쓰지 않는다 (target_width가 우선).
     crop: int = 512
     overlap: float = 0.25
+    aug_photo: float = 0.1   # 밝기·대비 지터 폭. 0.1이 기존 동작(p=0.3).
+                             # 0.1 초과면 p=0.8로 올리고 RandomGamma도 켠다.
+                             # 라벨을 안 건드리므로 기하 증강과 달리 안전하다.
     aug_scale: float = 0.2   # RandomScale 폭. 0이면 끈다.
                              # 공정 Si 폭이 약 2.5px라 스케일 증강이 라벨을
                              # 뭉갤 수 있어 반드시 켠 경우/끈 경우를 비교할 것.

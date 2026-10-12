@@ -136,6 +136,17 @@ def build_transform(cfg):
     tf = []
     if getattr(cfg, 'aug_scale', 0.0) > 0:
         tf.append(A.RandomScale(scale_limit=cfg.aug_scale, p=0.5))
+    # 광도 증강. 라벨을 1픽셀도 건드리지 않으므로 기하 증강과 달리 얇은 조직에
+    # 안전하다. 세게 거는 근거: 이미지별 절대 밝기는 공정 Si IoU와 무관한데
+    # (r=-0.01) 이미지 안에서의 상대 분리도는 가장 강하게 묶여 있고(r=-0.51),
+    # fold 3이 무너지는 원인이 학습에서 못 본 합금 = 다른 밝기 분포다.
+    # 밝기를 흔들면 모델이 절대값 대신 상대 관계를 쓰도록 강제된다.
+    # 정규화는 증강 '전' 이미지 통계를 쓰므로 흔든 만큼 그대로 남는다.
+    ph = getattr(cfg, 'aug_photo', 0.1)
+    photo = [A.RandomBrightnessContrast(brightness_limit=ph, contrast_limit=ph,
+                                        p=0.3 if ph <= 0.1 else 0.8)]
+    if ph > 0.1:
+        photo.append(A.RandomGamma(gamma_limit=(70, 140), p=0.5))
     return A.Compose(tf + [
         A.PadIfNeeded(min_height=cfg.crop, min_width=cfg.crop,
                       border_mode=cv2.BORDER_REFLECT_101),
@@ -143,9 +154,7 @@ def build_transform(cfg):
         A.HorizontalFlip(p=0.5),
         A.VerticalFlip(p=0.5),
         A.RandomRotate90(p=1.0),
-        A.RandomBrightnessContrast(brightness_limit=0.1, contrast_limit=0.1, p=0.3),
-        A.GaussNoise(p=0.2),
-    ])
+    ] + photo + [A.GaussNoise(p=0.2)])
 
 
 def fineness(items, cls=1):
