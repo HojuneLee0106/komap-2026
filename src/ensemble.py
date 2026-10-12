@@ -159,7 +159,11 @@ def eval_on_fold(work_dir, exps, fold=0, base_cfg=None, class_weights=False,
 
     L = predict_logits(ckpts, va, feed,
                        tta=cfg.tta, tta_flip=getattr(cfg, 'tta_flip', False))
-    cfg0 = _load(ckpts[0])[1]
+    # 후처리 설정(두께 임계값, 초정 Si 가드)은 학습 때 값이 아니라 지금 cfg를
+    # 따라야 한다. 안 그러면 base_cfg로 가드를 꺼도 조용히 무시된다.
+    # mode만은 체크포인트 것을 쓴다 — 3class/4class는 출력 의미 자체가 다르다.
+    cfg0 = replace(_load(ckpts[0])[1], si_thresh=cfg.si_thresh,
+                   min_sip_frac=getattr(cfg, 'min_sip_frac', 0.0))
     preds = [to_4class(to_hard(l, it['orig_hw']), cfg0) for l, it in zip(L, va)]
     r = evaluate(preds, [it['label_eval'] for it in va], 4)
     print(f'   ─────────────────────────')

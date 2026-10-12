@@ -13,6 +13,7 @@
   README.txt        어떤 모델·fold에서 나왔는지
 """
 import os, csv, glob, zipfile
+from dataclasses import replace
 import numpy as np, cv2
 from PIL import Image
 from scipy import ndimage as ndi
@@ -181,7 +182,9 @@ def run(cfg=None, exps=('F1_upp_b5', 'F2_convnext', 'F3_mit_b2'),
             return feeds[k]
 
         L = predict_logits(ckpts, va, feed)
-        cfg0 = _load(ckpts[0])[1]
+        # 후처리 설정은 체크포인트가 아니라 지금 cfg를 따른다 (ensemble 쪽과 동일)
+        cfg0 = replace(_load(ckpts[0])[1], si_thresh=cfg.si_thresh,
+                       min_sip_frac=getattr(cfg, 'min_sip_frac', 0.0))
 
         for l, it in zip(L, va):
             gt = it['label_eval'].astype(np.uint8)

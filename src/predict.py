@@ -1,4 +1,5 @@
 import os, glob, zipfile
+from dataclasses import replace
 import numpy as np, torch
 from PIL import Image
 
@@ -84,7 +85,9 @@ def main(cfg=None, ckpts=None, exps=None):
         print(f'  {os.path.basename(os.path.dirname(c))}/{os.path.basename(c)}  '
               f'{mc.arch}+{mc.encoder}  (val mIoU {score:.4f})')
 
-    ref = cfgs[0]
+    # 후처리 설정은 호출한 쪽 cfg를 따른다 (ensemble/oof와 동일)
+    ref = replace(cfgs[0], si_thresh=cfg.si_thresh,
+                  min_sip_frac=getattr(cfg, 'min_sip_frac', 0.0))
     for mc in cfgs[1:]:
         assert mc.mode == ref.mode, f'3class와 4class는 섞을 수 없다: {mc.exp}'
     n_cls = 4 if ref.mode == '4class' else 3
