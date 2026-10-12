@@ -50,17 +50,25 @@ def infer_logits(model, x, cfg, n_cls):
     acc = torch.zeros(1, n_cls, h, w, device=DEVICE)
     cnt = torch.zeros(1, 1, h, w, device=DEVICE)
     rots = list(range(4)) if cfg.tta else [0]
+    # tta_flip을 켜면 D4 8방향(회전 4 x 좌우반전 2). 둘 다 보간 없는 픽셀 순열이라
+    # 되돌릴 때 좌표 오차가 0이다. 되돌리는 순서는 건 순서의 역순이어야 한다
+    # (반전 -> 회전으로 걸었으면 역회전 -> 반전으로 푼다).
+    flips = [False, True] if getattr(cfg, 'tta_flip', False) and cfg.tta else [False]
 
     for (y, xx, th, tw) in _tiles(h, w, cfg.crop, cfg.overlap):
         patch = xp[..., y:y + th, xx:xx + tw]
         pp, ph, pw = pad_to_multiple(patch)
         pp = pp.to(memory_format=torch.channels_last)
         logit = 0
-        for k in rots:
-            with torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=DEVICE == 'cuda'):
-                o = model(torch.rot90(pp, k, (-2, -1)))
-            logit = logit + torch.rot90(o.float(), -k, (-2, -1))
-        acc[..., y:y + th, xx:xx + tw] += logit[..., :ph, :pw] / len(rots)
+        for fl in flips:
+            q = torch.flip(pp, (-1,)) if fl else pp
+            for k in rots:
+                with torch.autocast(DEVICE, dtype=AMP_DTYPE, enabled=DEVICE == 'cuda'):
+                    o = model(torch.rot90(q, k, (-2, -1)))
+                o = torch.rot90(o.float(), -k, (-2, -1))
+                logit = logit + (torch.flip(o, (-1,)) if fl else o)
+        acc[..., y:y + th, xx:xx + tw] += (logit[..., :ph, :pw]
+                                           / (len(rots) * len(flips)))
         cnt[..., y:y + th, xx:xx + tw] += 1
 
     return (acc / cnt)[0, :, :H, :W].cpu()

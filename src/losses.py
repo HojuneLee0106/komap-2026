@@ -62,6 +62,11 @@ def weighted_ce(logits, target, w, bmask, bw):
     """
     ls = F.cross_entropy(logits, target, weight=w, reduction='none')
     pw = 1.0 + bw * bmask.float()
+    # 주의(Amy 지적): 가중치 합으로 나눈다 = 가중 평균. 픽셀 수로 나누는 보통의
+    # CE보다 값이 (1 + bw*경계띠비율)배 작아진다 — bw=3, 띠 31%면 1.93배다.
+    # 그래서 ce_lovasz(0.5/0.5)에서 CE 쪽 비중이 같이 줄어, 경계를 올린 효과와
+    # 일부 상쇄된다. E3가 E1과 동점으로 나온 이유일 수 있다. 두 변수가 한꺼번에
+    # 움직인 것이므로 '경계 가중은 효과 없다'로 결론짓지 말 것.
     return (ls * pw).sum() / pw.sum()
 
 

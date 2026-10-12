@@ -21,9 +21,13 @@ from .metrics import evaluate
 from .config import CLASS_NAMES
 
 
-def _load(ckpt_path):
+def _load(ckpt_path, **over):
+    """over: 체크포인트에 저장된 설정을 덮어쓴다. TTA처럼 추론 때만 쓰는 값은
+    학습 당시 값이 아니라 지금 부르는 쪽 설정을 따라야 한다."""
     sd = torch.load(ckpt_path, map_location='cpu')
     c = CFG(**{k: v for k, v in sd['cfg'].items() if k in CFG.__dataclass_fields__})
+    if over:
+        c = replace(c, **over)
     n_cls = 4 if c.mode == '4class' else 3
     # 추론에는 사전학습 가중치가 필요 없다. 바로 다음 줄에서 체크포인트로
     # 전부 덮어쓰기 때문이다. pretrained를 켠 채로 두면 weight_dir에 파일이
@@ -49,7 +53,7 @@ def collect(work_dir, exps, fold):
 
 
 @torch.no_grad()
-def predict_logits(ckpts, items, feed=None):
+def predict_logits(ckpts, items, feed=None, **over):
     """여러 모델의 logit을 원본 해상도로 되돌린 뒤 평균한다.
 
     feed(cfg) -> 그 모델의 입력 해상도로 읽은 items (items와 순서 동일).
@@ -57,7 +61,7 @@ def predict_logits(ckpts, items, feed=None):
     hws = [it['orig_hw'] for it in items]
     acc = None
     for p in ckpts:
-        m, c, bias, _ = _load(p)
+        m, c, bias, _ = _load(p, **over)
         n_cls = 4 if c.mode == '4class' else 3
         cur = [logit_to_orig(infer_logits(m, normalize_full(it), c, n_cls), hw)
                + bias[:, None, None]
@@ -153,7 +157,8 @@ def eval_on_fold(work_dir, exps, fold=0, base_cfg=None, class_weights=False,
         _, _, _, s = _load(p)
         print(f'   {os.path.basename(os.path.dirname(p)):16s} 단독 {s:.4f}')
 
-    L = predict_logits(ckpts, va, feed)
+    L = predict_logits(ckpts, va, feed,
+                       tta=cfg.tta, tta_flip=getattr(cfg, 'tta_flip', False))
     cfg0 = _load(ckpts[0])[1]
     preds = [to_4class(to_hard(l, it['orig_hw']), cfg0) for l, it in zip(L, va)]
     r = evaluate(preds, [it['label_eval'] for it in va], 4)

@@ -78,7 +78,8 @@ def main(cfg=None, ckpts=None, exps=None):
     # 데이터 해상도를 바꾸는 설정(scale/target_width/in_mode)은 전부 같아야 한다.
     models, biases, cfgs = [], [], []
     for c in ckpts:
-        m, mc, bias, score = _load(c)
+        m, mc, bias, score = _load(c, tta=cfg.tta,
+                                   tta_flip=getattr(cfg, 'tta_flip', False))
         models.append(m); biases.append(bias); cfgs.append(mc)
         print(f'  {os.path.basename(os.path.dirname(c))}/{os.path.basename(c)}  '
               f'{mc.arch}+{mc.encoder}  (val mIoU {score:.4f})')

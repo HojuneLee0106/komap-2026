@@ -75,6 +75,10 @@ class CFG:
     folds: tuple = (0, 1, 2, 3, 4)
     val_every: int = 5
     tta: bool = True
+    tta_flip: bool = False
+    # True면 TTA를 회전 4회에서 D4 8회(회전x좌우반전)로 늘린다. 추론만 바뀌므로
+    # 재학습이 필요 없다. 얇은 조직에서는 뷰를 늘리는 것이 오히려 옳은 점수를
+    # 희석할 수도 있어, 쓰기 전에 같은 fold에서 4회와 직접 비교할 것.
     calibrate: bool = True   # 검증셋에서 클래스별 logit 보정값을 탐색한다.
                              # 지금 모델은 공정 Si를 과예측 중(8.4% vs 정답 6.9%).
 
