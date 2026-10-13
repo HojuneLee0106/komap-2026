@@ -117,11 +117,22 @@ def useall(argv):
 
 
 def tune(argv=()):
-    """5단계 — 앙상블 보정과 추론 겹침. 추론만 한다."""
+    """5단계 — 앙상블 구성·겹침·보정을 fold 0,3에서 전부 잰다. 추론만."""
     from . import ensemble
     c = cfg_for('E3_scale2_bw3')
-    exps = [e for e in list(EXPS) + ['A_all']
-            if glob.glob(os.path.join(c.work_dir, e, 'fold*.pth'))]
+    have = lambda e: glob.glob(os.path.join(c.work_dir, e, 'fold*.pth'))
+    core = [e for e in SUBMIT_EXPS + ['A_all'] if have(e)]
+    exps = core
+
+    # P1_photo를 넣는 게 이득인지부터 잰다. 단독 성적이 나빠도 오차 패턴이
+    # 다르면 앙상블에는 보탬이 될 수 있다 — 추측하지 말고 잴 것.
+    if have('P1_photo'):
+        for tag, ex in (('P1 빼고', core), ('P1 넣고', core + ['P1_photo'])):
+            for f in (0, 3):
+                print(f'\n===== {tag} | fold {f} =====')
+                ensemble.eval_on_fold(None, ex, fold=f, base_cfg=c)
+        print('\n양쪽 fold가 같이 올랐을 때만 submit 에 --with-photo 를 줄 것.\n')
+
     print(f'쓸 실험: {exps}\n')
     for ov in ({}, {'overlap': 0.5}):
         for f in (0, 3):
@@ -135,10 +146,16 @@ def tune(argv=()):
 
 
 def submit(argv=()):
-    """0·6단계 — 제출물 생성. 끝난 fold가 있는 실험을 전부 쓴다."""
+    """0·6단계 — 제출물 생성.
+
+    P1_photo는 기본으로 뺀다. fold 0 -0.0001 / fold 3 -0.0097로 기준에 못 미쳤고,
+    앙상블에 넣는 게 이득인지는 따로 재야 한다 — 원해상도 모델도 단독으로는
+    0.79였는데 앙상블에서는 해였다. 재서 이득이면 --with-photo 로 넣을 것.
+    """
     from . import predict
     c = cfg_for('E3_scale2_bw3', exp='SUBMIT')
-    exps = [e for e in SUBMIT_EXPS + ['P1_photo', 'A_all']
+    cand = SUBMIT_EXPS + ['A_all'] + (['P1_photo'] if '--with-photo' in argv else [])
+    exps = [e for e in cand
             if glob.glob(os.path.join(c.work_dir, e, 'fold*.pth'))]
     bias, over = None, {}
     tp = os.path.join(c.work_dir, 'tune.json')
