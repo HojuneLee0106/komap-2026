@@ -121,7 +121,10 @@ def tune(argv=()):
     from . import ensemble
     c = cfg_for('E3_scale2_bw3')
     have = lambda e: glob.glob(os.path.join(c.work_dir, e, 'fold*.pth'))
-    core = [e for e in SUBMIT_EXPS + ['A_all'] if have(e)]
+    # A_all은 평가에서 뺀다. 90장 전부로 학습해서 fold 0·3 검증 이미지를 전부
+    # 봤으므로, 넣고 재면 점수가 부풀고 그 오염된 예측 위에서 보정값이 맞춰진다.
+    # 제출에는 포함한다 — 테스트 이미지는 어떤 모델도 본 적이 없다.
+    core = [e for e in SUBMIT_EXPS if have(e)]
     exps = core
 
     # P1_photo를 넣는 게 이득인지부터 잰다. 단독 성적이 나빠도 오차 패턴이
