@@ -36,12 +36,13 @@ BASELINE = {0: 0.8067, 3: 0.7472}        # E3 기준값. 1단계는 양쪽 다 �
 
 
 def cfg_for(exp, **kw):
+    """kw가 항상 이긴다 — exp='SUBMIT' 처럼 이름을 갈아끼울 수 있어야 한다."""
     c = CFG()
     for k, v in (('work_dir', 'KOMAP_WORK'), ('data_root', 'KOMAP_DATA'),
                  ('weight_dir', 'KOMAP_WEIGHTS')):
         if os.environ.get(v):
             c = replace(c, **{k: os.environ[v]})
-    return replace(c, exp=exp, **EXPS[exp], **kw)
+    return replace(c, **{'exp': exp, **EXPS[exp], **kw})
 
 
 def _score(work, exp, fold):

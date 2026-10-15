@@ -67,12 +67,14 @@ def main(cfg=None, ckpts=None, exps=None, extra_bias=None):
     set_seed(cfg.seed)
     n_cls = 4 if cfg.mode == '4class' else 3
     run_dir = os.path.join(cfg.work_dir, cfg.exp)
+    # fold*.pth 는 재개용 스냅샷 fold{n}_last.pth 까지 긁는다. 그 파일에는
+    # 'cfg'가 없어 _load가 KeyError로 죽고, 설령 있었다면 같은 모델이 두 번
+    # 평균에 들어갔을 것이다. 끝난 체크포인트만 고른다.
+    pick = lambda d: [p for p in sorted(glob.glob(f'{d}/fold*.pth'))
+                      if not p.endswith('_last.pth')]
     if ckpts is None:
-        if exps:   # 여러 실험을 섞는다
-            ckpts = [p for e in exps
-                     for p in sorted(glob.glob(f'{cfg.work_dir}/{e}/fold*.pth'))]
-        else:
-            ckpts = sorted(glob.glob(f'{run_dir}/fold*.pth'))
+        ckpts = ([p for e in exps for p in pick(f'{cfg.work_dir}/{e}')]
+                 if exps else pick(run_dir))
     assert ckpts, f'체크포인트 없음: {run_dir}'
 
     # 체크포인트마다 자기 설정(arch/encoder)을 들고 있으므로 그걸로 복원한다.
